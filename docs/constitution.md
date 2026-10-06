@@ -10,8 +10,11 @@ Principios innegociables. Toda spec, plan y tarea debe cumplirlos.
    en `grades`. El resto separa negocio de SQL por organización de
    archivos, o no lo separa si es CRUD directo (ver tabla de `AGENTS.md`).
 3. **Nada se borra físicamente**: toda eliminación es un estado
-   (`CANCELLED`, `active = false`) con motivo, salvo la única excepción ya
-   documentada (lapso vacío, no cerrado, sin terminar).
+   (`CANCELLED`, `active = false`) con motivo. Hay dos excepciones, y se
+   justifican por lo mismo: la fila no tiene historial que perder. (a) lapso
+   vacío, no cerrado y sin terminar. (b) sección sin ningún estudiante que la
+   referencie — lo garantiza la FK `RESTRICT` de `students.id_section`, así
+   que no hace falta un trigger propio para esta tabla.
 4. **Un hecho se protege por su evidencia, no por su fecha**: un evento
    "ocurrió" si tiene asistencia registrada, nunca por comparar con hoy.
 5. **Fallar rápido, nunca en silencio**: `unwrap()`/`expect()` solo en el

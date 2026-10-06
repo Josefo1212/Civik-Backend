@@ -7,40 +7,60 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 ## Estado actual
 
 - Proyecto reiniciado desde cero (Node/TS → Rust + hexagonal proporcional).
-  No existe todavía ningún `Cargo.toml` ni código de aplicación.
-- El esquema de base de datos (`db/migrations/20260926162010_init.sql`) ya
-  está corregido: sin `notes`/`school_term`, sin orquestación en PL/pgSQL.
-  Las 10 reglas de dominio están como constraints/triggers.
-- `AGENTS.md` y la skill `civik-dominio` ya documentan arquitectura, stack,
-  entornos, testing y la fórmula de notas. Léelos antes de proponer nada.
-- Fase actual del plan de construcción (ver tabla "Orden de construcción"
-  en `AGENTS.md`): **Fase 0 — Bootstrap**, sin empezar.
+  `Cargo.toml` y código real (commit `1cd5daa`): `main.rs`, `app.rs`,
+  `config/database.rs`, `shared/{error,audit,round}.rs`, `GET /_health`.
+  **Fases 0 y 1** de "Orden de construcción" (`AGENTS.md`) completas.
+- **Fase 2 — `sections`**, primer uso de SDD. Spec 002 **aprobada**
+  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 y T2 hechas**:
+  migración `20261006010939_sections_active_and_not_blank` (`active`,
+  `sections_not_blank`) con 7 tests en `tests/sections_migracion.rs`, y
+  `sections/domain.rs` con `Grado`/`Turno`, `preparar_entrada` y
+  `ErrorDominio`, con 21 tests unitarios sin base de datos.
+  Sigue **T3**: `AppError::Conflict` y el mapeo de códigos de Postgres.
+- Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
+  orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
+- `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
+  entornos, testing y la fórmula de notas. Leerlos antes de proponer nada.
 
 ## Decisiones (y por qué)
 
-- Una sola base (`civik_dev`), sin `civik_test`: los tests usan transacción
-  + rollback, nunca hacen `commit`.
-- `DATABASE_URL` unificada (no variables sueltas): la necesita `sqlx` para
-  verificar consultas en compilación, y evita que runtime y compile-time
-  usen fuentes de verdad distintas.
-- La orquestación de prácticas automáticas se mueve a `events::service`
-  (Rust), no a PL/pgSQL: con `sqlx::Transaction` se logra la misma
-  atomicidad sin mezclar negocio con invariantes de base de datos.
+- Una sola base (`civik_dev`), sin `civik_test`: los tests usan transacción +
+  rollback, nunca `commit`.
+- `DATABASE_URL` unificada: la necesita `sqlx` para verificar consultas en
+  compilación, y evita que runtime y compile-time difieran.
+- Orquestación de prácticas automáticas en `events::service` (Rust), no en
+  PL/pgSQL: `sqlx::Transaction` da la misma atomicidad sin mezclar negocio con
+  invariantes.
+- Constitución en `docs/constitution.md`, no en la raíz: coincide con la ruta
+  que usan el skill `sdd` y los comandos `/sdd-*`.
+- `db/schema.sql` **se versiona**: es contra lo que se leen los diffs de
+  esquema, no un artefacto local descartable.
 
 ## Aprendizajes y errores a evitar
 
-- (vacío por ahora — completar según aparezcan sorpresas de `sqlx`/`axum`)
+- **El host no tiene `pg_dump`** (ni sudo/apt/dpkg) y `dbmate up` descarta el
+  volcado **en silencio**; lo compensa un envoltorio `~/.local/bin/pg_dump`
+  que delega en el contenedor `pruebapostgres-postgres-1`. **Fuera del repo**:
+  sin él, en otra máquina `db/schema.sql` desaparece sin error → verificarlo
+  tras cada migración. Alternativa probada y **no instalada**: `pg_dump` 18.6
+  del paquete Arch `postgresql-libs` (no `postgresql`, que es solo servidor),
+  que funciona sin sudo con `LD_LIBRARY_PATH` a su `libpq.so.5`.
+- `dbmate rollback` + `up` no devuelve el esquema byte a byte: las columnas
+  re-agregadas quedan al final de la lista.
+- `validar_largo` cuenta **caracteres, no bytes**: `varchar(10)` de Postgres
+  cuenta caracteres, y medir en bytes rechazaría datos que la base sí acepta.
 
 ## Próximos pasos
 
-- Fase 0: `Cargo.toml`, `config/database.rs`, `main.rs`, `app.rs`,
-  `GET /_health`, `shared/error.rs`.
-- Antes de Fase 0: decidir si se adopta SDD (constitution + specs) para
-  las fases siguientes, empezando por la Fase 2 (`sections`).
+- **T3**: `shared/audit.rs` en una transacción real. Ojo: `entity_id` es
+  `Option<&str>` contra una columna `uuid NOT NULL`; hay que resolverlo.
+- Los `dead_code` de `shared/*` y el `#[allow(dead_code)]` de
+  `sections/domain.rs` los limpia T9.
 
-## Fase 1 (2026-10-03) - shared/audit.rs y shared/round.rs
+## Bitácora
 
-- Recreada base de datos: eliminado civik_dev/civik_test, creado civik_dev y aplicado db/20260926162010_init.sql (7 tablas, 7 enums).
-- Implementado shared/audit.rs con write_audit_log (PgExecutor) y write_audit_log_tx (PgTransaction) para insertar en audit_logs con entity, entity_id, action, data (jsonb).
-- Implementado shared/round.rs con round_grade (redondeo a 1 decimal, bankers rounding) y round_to_one_decimal (patrón Math.round(n*10)/10). shared/mod.rs actualizado.
-- Cargo check sin errores; advertencias solo por código no usado (esperado).
+- **Fase 1 (2026-10-03)** — `shared/audit.rs` y `shared/round.rs`. Base
+  recreada (borrada `civik_dev`/`civik_test`, reaplicada la init).
+- **Fase 2 (2026-10-06)** — spec 002 (`sections`) aprobada. T1: migración
+  `active` + `sections_not_blank`, 7 tests en `tests/sections_migracion.rs`.
+  T2: `sections/domain.rs`, 21 tests unitarios, sin base de datos.
