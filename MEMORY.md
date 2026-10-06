@@ -11,17 +11,18 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `config/database.rs`, `shared/{error,audit,round}.rs`, `GET /_health`.
   **Fases 0 y 1** de "Orden de construcción" (`AGENTS.md`) completas.
 - **Fase 2 — `sections`**, primer uso de SDD. Spec 002 **aprobada**
-  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1, T2 y T3 hechas**:
+  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T4 hechas**:
   migración `20261006010939_sections_active_and_not_blank` (`active`,
   `sections_not_blank`) con 7 tests en `tests/sections_migracion.rs`;
   `sections/domain.rs` con `Grado`/`Turno`, `preparar_entrada` y
-  `ErrorDominio`, con 21 tests unitarios sin base de datos; y la prueba de
-  humo de auditoría + `Conflict`: `src/lib.rs` (crate lib+binary), smoke test
-  de `write_audit_log` en `tests/audit.rs` (3 tests), y
+  `ErrorDominio`, con 21 tests unitarios sin base de datos; la prueba de
+  humo de auditoría + `Conflict` (`src/lib.rs`, `tests/audit.rs`,
   `AppError::Conflict` + `mapear_violacion` + `From<sqlx::Error>` en
   `src/shared/error.rs`, probados con errores Postgres reales en
-  `tests/conflictos_bd.rs`. **42 tests**, clippy **0/0**, crate
-  `rustfmt`-limpio. Sigue **T4**: CRUD completo de secciones (RF 1–6).
+  `tests/conflictos_bd.rs`); y el **alta** en `sections/queries.rs` +
+  `queries/create.sql` (`crear` sobre `&mut PgTransaction` con auditoría en
+  la misma tx) con 4 tests en `tests/sections.rs`. **46 tests**, clippy
+  **0/0**, `rustfmt` limpio. Sigue **T5**: edición, baja y reactivación.
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -60,11 +61,18 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 - `rustfmt` dado un archivo con `mod` (p. ej. `src/lib.rs`) reformatea por
   **cascada sus submódulos**: al formatear `lib.rs` quedaron `app.rs` y otros
   formateados sin tocarlos explícitamente. No es un cambio misterioso.
+- **sqlx no mapea enums propios en los macros de compilación** (ni como
+  parámetro ni en columnas de `RETURNING`; los casts se infieren además como
+  nulables). `sections.shift` es el enum `shift_type` y se resuelve así: el
+  parámetro se bindea como text y se castea en SQL (`$3::text::shift_type`,
+  Postgres revalida el catálogo), el `RETURNING` omite la columna del enum, y
+  la fila `Seccion.shift` es `String`. No pelear con `#[sqlx(type_name)]` en
+  macros: no termina de funcionar y ensucia el dominio con sqlx.
 
 ## Próximos pasos
 
-- **T4**: CRUD de secciones (RF 1–6): handlers + queries + SQL verificado en
-  compilación, con el 409/`Conflict` listo para el duplicado (RF 8).
+- **T5**: edición (`update.sql`), baja y reactivación (`set_active.sql`),
+  incluida la idempotencia (RF-19/RF-21) y la sección con estudiantes.
 - Los `dead_code` de `shared/*` y el `#[allow(dead_code)]` de
   `sections/domain.rs` los limpia T9.
 
@@ -78,3 +86,7 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 - **Fase 2 — T3 (2026-10-06)** — humo de auditoría y `Conflict`: `lib.rs`,
   `tests/audit.rs` (3), `Conflict` + `mapear_violacion` + `From<sqlx::Error>`
   con `tests/conflictos_bd.rs` (3). 42 tests totales, clippy 0/0, fmt limpio.
+- **Fase 2 — T4 (2026-10-06)** — alta: `queries.rs` + `create.sql` (`crear`
+  sobre `&mut PgTransaction`, auditoría en la misma tx), 4 tests en
+  `tests/sections.rs`. 46 tests totales. Enum `shift_type` resuelto con
+  `$3::text::shift_type` y `Seccion.shift: String` (aprendizaje sqlx).

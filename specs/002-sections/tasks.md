@@ -61,10 +61,12 @@ exista en la base, ningún `.sql` que la mencione compila.
     restricción **no** se convierte en 409, y `AppError::Conflict`
     responde 409.
 
-- [ ] **T4. `queries.rs` y `create.sql`, con el alta y sus duplicados.**
+- [x] **T4. `queries.rs` y `create.sql`, con el alta y sus duplicados.**
   RF-1, RF-2, RF-3, RF-4, RF-5, RF-6, RF-7, RF-8, RF-27
-  - `crear` como función genérica sobre `PgExecutor`, para que el test le
-    pueda pasar `&mut tx`.
+  - `crear` toma `&mut PgTransaction`, no un `PgExecutor` genérico: la
+    operación escribe sección + auditoría en el mismo `BEGIN/COMMIT` (RNF-2),
+    y `sqlx` no permite reutilizar un executor genérico para dos llamadas. El
+    test le pasa `&mut tx`; el handler envolverá con `pool.transaction()`.
   - `INSERT` con `RETURNING` de las siete columnas.
   - Escritura de auditoría en la misma transacción.
   - Hecho cuando: el alta persiste la fila ya normalizada y devuelve
