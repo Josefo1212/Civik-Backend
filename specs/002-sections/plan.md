@@ -393,8 +393,17 @@ lo usó.
 
 Esto no es un problema del plan de `sections`, pero es un bloqueo para
 RF-27. Lo más temprano que se puede hacer es un test que llame al helper y
-descarte la transacción: si falla, se corrige la firma a `Option<Uuid>` en
-`shared/audit.rs`, que es un cambio de tres líneas. Es la tarea T3.
+descarte la transacción: si falla, se corrige la firma a `Uuid`
+**no-opcional** en `shared/audit.rs`. No `Option<Uuid>`, que es lo que
+decía este plan en su primera versión: la columna es `uuid NOT NULL`, y
+`Option` seguiría admitiendo un NULL que la base rechaza en runtime, que es
+el mismo bug movido de lugar. Es la tarea T3.
+
+De paso, `data: Option<&Value>` bindea contra `jsonb NOT NULL`: con `None`
+produce un NULL y revienta igual. Se arregla bindeando `{}` por defecto.
+Ojo: no sirve `unwrap_or_default()`, porque `Value::default()` de serde_json
+es `Null`, no `{}` — se construye `Value::Object(Map::new())`, que es además
+lo que la columna ya trae como `DEFAULT`.
 
 **d) `dbmate` va a generar `db/schema.sql`.** Después del próximo
 `dbmate up`, aparece un volcado del esquema en la raíz de `db/`. `AGENTS.md`

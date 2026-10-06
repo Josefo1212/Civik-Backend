@@ -39,7 +39,7 @@ exista en la base, ningún `.sql` que la mencione compila.
     `"   "` rechazados, `"quinto"` rechazado, `"NOCTURNO"` rechazado, y
     subdivisión más larga que el máximo rechazada.
 
-- [ ] **T3. `AppError::Conflict` y mapeo de códigos de Postgres.**
+- [x] **T3. `AppError::Conflict` y mapeo de códigos de Postgres.**
   RF-8, RF-17, RF-23, RF-27
   - Agregar la variante `Conflict(String)` a `AppError` con 409.
   - Traducir `23505` sobre `uq_sections_grade_section_shift` a
@@ -47,10 +47,18 @@ exista en la base, ningún `.sql` que la mencione compila.
     "la sección tiene estudiantes".
   - Antes de nada, prueba de humo de `shared::audit::write_audit_log`: el
     helper bindea `Option<&str>` contra una columna `uuid NOT NULL` y nunca
-    se ha ejecutado. Si falla, corregir la firma a `Option<Uuid>`.
+    se ha ejecutado. Si falla, corregir la firma a `Uuid` **no-opcional** —
+    la columna es `NOT NULL`, así que `Option` reintroduciría un NULL que la
+    base rechaza en runtime, que es el mismo bug movido de lugar. De paso,
+    `data: Option<&Value>` contra `jsonb NOT NULL` debe bindear `{}` cuando
+    es `None`.
+  - Sin `src/lib.rs`, `tests/` no puede llamar al código del binario: agregarlo
+    y dejar `main.rs` como envoltorio, para que T4 y T7 puedan usarse desde
+    tests de integración.
   - Hecho cuando: la prueba de humo de `write_audit_log` escribe y lee una
     fila de `audit_logs` dentro de la transacción descartable, los dos
-    códigos se traducen a su mensaje en español, y `AppError::Conflict`
+    códigos se traducen a su mensaje en español, un `23505` sobre otra
+    restricción **no** se convierte en 409, y `AppError::Conflict`
     responde 409.
 
 - [ ] **T4. `queries.rs` y `create.sql`, con el alta y sus duplicados.**

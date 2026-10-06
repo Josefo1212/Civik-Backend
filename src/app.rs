@@ -1,9 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::get,
-    Router,
-};
+use axum::{extract::State, http::StatusCode, routing::get, Router};
 use sqlx::PgPool;
 
 pub fn build_router(pool: PgPool) -> Router {

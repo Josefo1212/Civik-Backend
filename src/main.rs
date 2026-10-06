@@ -1,8 +1,4 @@
-mod app;
-mod config;
-mod modules;
-mod shared;
-
+use civik_backend::{app, config};
 use std::net::SocketAddr;
 
 #[tokio::main]

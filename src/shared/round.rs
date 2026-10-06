@@ -1,4 +1,3 @@
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
 const ROUNDING_SCALE: u32 = 1;
@@ -8,7 +7,10 @@ const MULTIPLIER: i64 = 10;
 /// Redondea a 1 decimal usando redondeo estándar (bankers rounding) de rust_decimal.
 /// `n` debe estar en base 20; el resultado conserva hasta 1 decimal.
 pub fn round_grade(n: Decimal) -> Decimal {
-    n.round_dp_with_strategy(ROUNDING_SCALE, rust_decimal::RoundingStrategy::MidpointNearestEven)
+    n.round_dp_with_strategy(
+        ROUNDING_SCALE,
+        rust_decimal::RoundingStrategy::MidpointNearestEven,
+    )
 }
 
 /// Redondea multiplicando por 10, redondeando a entero, dividiendo por 10.
