@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use tracing::warn;
 
 use crate::modules::sections::handler;
+use crate::modules::students::handler as estudiantes;
 
 pub fn build_router(pool: PgPool) -> Router {
     Router::new()
@@ -21,6 +22,16 @@ pub fn build_router(pool: PgPool) -> Router {
         )
         .route("/sections/{id}/baja", post(handler::baja))
         .route("/sections/{id}/reactivar", post(handler::reactivar))
+        .route(
+            "/sections/{id}/students",
+            post(estudiantes::crear).get(estudiantes::listar),
+        )
+        .route(
+            "/students/{id}",
+            get(estudiantes::consultar).put(estudiantes::editar),
+        )
+        .route("/students/{id}/baja", post(estudiantes::baja))
+        .route("/students/{id}/reactivar", post(estudiantes::reactivar))
         .with_state(pool)
 }
 
