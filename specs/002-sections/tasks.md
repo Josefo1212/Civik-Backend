@@ -96,7 +96,7 @@ exista en la base, ningún `.sql` que la mencione compila.
     un estudiante **inactivo** también falla; una sección dada de baja que
     nunca tuvo estudiantes sí se elimina.
 
-- [ ] **T7. `get_by_id.sql` y `list_active.sql`, con las lecturas.**
+- [x] **T7. `get_by_id.sql` y `list_active.sql`, con las lecturas.**
   RF-9, RF-10, RF-11, RF-12, RF-13, RF-24, RNF-3
   - `list_active.sql` con filtro opcional por grado y el orden por
     `array_position($2::text[], grade_level)`, con el array construido en

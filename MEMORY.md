@@ -11,7 +11,7 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `config/database.rs`, `shared/{error,audit,round}.rs`, `GET /_health`.
   **Fases 0 y 1** de "Orden de construcción" (`AGENTS.md`) completas.
 - **Fase 2 — `sections`**, primer uso de SDD. Spec 002 **aprobada**
-  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T6 hechas**:
+  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T7 hechas**:
   migración `20261006010939_sections_active_and_not_blank` (`active`,
   `sections_not_blank`) con 7 tests en `tests/sections_migracion.rs`;
   `sections/domain.rs` con `Grado`/`Turno`, `preparar_entrada` y
@@ -19,15 +19,17 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   humo de auditoría + `Conflict` (`src/lib.rs`, `tests/audit.rs`,
   `AppError::Conflict` + `mapear_violacion` + `From<sqlx::Error>` en
   `src/shared/error.rs`, con errores Postgres reales en
-  `tests/conflictos_bd.rs`); el CRUD base en `sections/queries.rs` +
-  `queries/{create,update,get_by_id,set_active,delete}.sql`: `crear`,
-  `editar`, `get_by_id`, `set_active` (idempotente con `IS DISTINCT FROM`) y
-  `eliminar` (auditoría antes del borrado, 4 tests), todos con auditoría en
-  la misma tx, 15 tests en `tests/sections.rs`. **60 tests**, clippy **0/0**.
+  `tests/conflictos_bd.rs`); el CRUD en `sections/queries.rs` +
+  `queries/{create,update,get_by_id,set_active,delete,list_active}.sql`:
+  `crear`, `editar`, `get_by_id`, `set_active` (idempotente con
+  `IS DISTINCT FROM`), `eliminar` (auditoría antes del borrado, 4 tests) y
+  `listar_activas` (filtro opcional por grado; orden canónico con
+  `array_position($2::text[], grade_level)` + `COALESCE(..., 99)`, el array
+  sale de `Grado::TODOS`), todos con auditoría en la misma tx, 19 tests en
+  `tests/sections.rs`. **64 tests**, clippy **0/0**.
   `_health` ya no miente: responde **503** real cuando la base cae (antes
   `let _ =` y siempre 200), probado con `tower::ServiceExt::oneshot` en
-  `tests/health.rs`. Sigue **T7**: lecturas (`get_by_id.sql` y
-  `list_active.sql`).
+  `tests/health.rs`. Sigue **T8**: `handler.rs` y las rutas en `app.rs`.
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -99,7 +101,8 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 
 ## Próximos pasos
 
-- **T7**: lecturas (`get_by_id.sql` y `list_active.sql`), con `listar_activas`.
+- **T8**: `handler.rs` y las rutas en `app.rs` (7 endpoints, bordes HTTP con
+  `tower::ServiceExt::oneshot`).
 - Los `dead_code` de `shared/*` y el `#[allow(dead_code)]` de
   `sections/domain.rs` los limpia T9.
 
@@ -128,3 +131,9 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   emite `23001`, no `23503`; `mapear_violacion` cubre ambos y se agregó el
   test de integración real en `tests/conflictos_bd.rs` (4). Savepoints por
   SQL directo (sqlx 0.8 no los expone). **60 tests totales**, clippy 0/0.
+- **Fase 2 — T7 (2026-10-06)** — `list_active.sql` + `listar_activas`:
+  filtro opcional por grado, omisión de las inactivas y orden canónico
+  (`array_position` sobre el array de `Grado::TODOS`, `COALESCE 99`); 4
+  tests nuevos en `tests/sections.rs` (orden + RNF-3 estable, filtro por
+  grado, get_by_id de inactiva, inexistente). **64 tests totales**, clippy
+  0/0.

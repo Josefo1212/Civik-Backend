@@ -20,14 +20,20 @@
 //!   "la sección tiene estudiantes" y la fila sigue.
 //! - RF-27: alta, edición, baja, reactivación y eliminación dejan su
 //!   auditoría.
+//! - RF-9 a RF-11 y RF-24: `listar_activas` devuelve en una sola llamada,
+//!   omite las inactivas y ordena `1ro`→`5to` con la subdivisión alfabética.
+//! - RF-12 y RF-13: `get_by_id` trae también las dadas de baja e inexistentes
+//!   no devuelven fila.
 //!
 //! Los casos de validación pura (RF-5/6/7) ya viven en los tests de
 //! `domain.rs`; acá se ejercita el camino completo hasta la base de datos.
 
 mod common;
 
-use civik_backend::modules::sections::domain::preparar_entrada;
-use civik_backend::modules::sections::queries::{crear, editar, eliminar, set_active, Seccion};
+use civik_backend::modules::sections::domain::{preparar_entrada, Grado};
+use civik_backend::modules::sections::queries::{
+    crear, editar, eliminar, get_by_id, listar_activas, set_active, Seccion,
+};
 use civik_backend::shared::error::AppError;
 use uuid::Uuid;
 
@@ -599,6 +605,101 @@ async fn eliminar_una_seccion_dada_de_baja_sin_estudiantes_tambien_la_borra() ->
         .fetch_one(&mut *tx)
         .await?;
     assert_eq!(quedan, 0);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn listar_activas_ordena_por_grado_y_subdivision_y_omite_inactivas() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    // Se crean desordenadas a propósito: solo el ORDER BY puede estabilizarlas.
+    let _3ro_c = crear(&mut tx, preparar_entrada("3ro", "c", "MATUTINO")?).await?;
+    let _1ro_a = crear(&mut tx, preparar_entrada("1ro", "a", "MATUTINO")?).await?;
+    let _5to_b = crear(&mut tx, preparar_entrada("5to", "b", "VESPERTINO")?).await?;
+    let _2do_a = crear(&mut tx, preparar_entrada("2do", "a", "MATUTINO")?).await?;
+    let _3ro_a = crear(&mut tx, preparar_entrada("3ro", "a", "MATUTINO")?).await?;
+    let _1ro_b = crear(&mut tx, preparar_entrada("1ro", "b", "MATUTINO")?).await?;
+
+    // RF-24: la sección dada de baja no puede aparecer en el listado.
+    set_active(&mut tx, _3ro_a.id, false).await?;
+
+    // RF-9: todas las activas en una sola llamada; RF-11: `1ro`→`5to` y dentro
+    // del grado la subdivisión en orden alfabético.
+    let lista = listar_activas(&mut *tx, None).await?;
+
+    let esperado = ["1ro:a", "1ro:b", "2do:a", "3ro:c", "5to:b"];
+    let obtenido: Vec<String> = lista
+        .iter()
+        .map(|s| format!("{}:{}", s.grade_level, s.section))
+        .collect();
+    assert_eq!(obtenido, esperado, "RF-11: el orden debe ser el canónico");
+
+    // RNF-3: dos listados seguidos producen exactamente el mismo orden.
+    let segunda = listar_activas(&mut *tx, None).await?;
+    assert_eq!(lista[0].id, segunda[0].id);
+    assert_eq!(lista[1].id, segunda[1].id);
+    assert_eq!(lista[2].id, segunda[2].id);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn listar_activas_filtra_por_un_solo_grado() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let _1ro_a = crear(&mut tx, preparar_entrada("1ro", "a", "MATUTINO")?).await?;
+    let _1ro_c = crear(&mut tx, preparar_entrada("1ro", "c", "MATUTINO")?).await?;
+    let _2do_b = crear(&mut tx, preparar_entrada("2do", "b", "MATUTINO")?).await?;
+
+    // RF-10: solo las activas de ese grado, mismo orden que el listado completo.
+    let lista = listar_activas(&mut *tx, Some(Grado::Primero)).await?;
+    assert_eq!(lista.len(), 2, "el filtro deja fuera el 2do");
+
+    let ids: Vec<Uuid> = lista.iter().map(|s| s.id).collect();
+    assert!(ids.contains(&_1ro_a.id) && ids.contains(&_1ro_c.id));
+    assert_eq!(lista[0].section, "a");
+    assert_eq!(lista[1].section, "c");
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_by_id_trae_una_seccion_dada_de_baja() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear(&mut tx, preparar_entrada("4to", "b", "VESPERTINO")?).await?;
+    set_active(&mut tx, seccion.id, false).await?;
+
+    // RF-12: el listado no la muestra (RF-24), pero por identificador sí se
+    // consulta y se ve que está dada de baja, sin perder sus datos.
+    let consultada = get_by_id(&mut *tx, seccion.id).await?;
+    assert_eq!(consultada.id, seccion.id);
+    assert!(!consultada.active, "RF-12: la consulta revela la baja");
+    assert_eq!(consultada.grade_level, "4to");
+    assert_eq!(consultada.shift, "VESPERTINO");
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_by_id_inexistente_no_devuelve_fila() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    // RF-13: un identificador que no existe no devuelve fila (RowNotFound).
+    let resultado = get_by_id(&mut *tx, Uuid::new_v4()).await;
+    assert!(
+        matches!(resultado, Err(sqlx::Error::RowNotFound)),
+        "esperaba RowNotFound, llegó: {resultado:?}"
+    );
 
     tx.rollback().await?;
     Ok(())

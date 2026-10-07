@@ -1,4 +1,4 @@
-use crate::modules::sections::domain::DatosSeccion;
+use crate::modules::sections::domain::{DatosSeccion, Grado};
 use crate::shared::audit;
 use chrono::{DateTime, Utc};
 use serde_json::json;
@@ -270,4 +270,32 @@ pub async fn eliminar(tx: &mut PgTransaction<'_>, id: Uuid) -> sqlx::Result<Secc
     };
 
     Ok(base.en_seccion())
+}
+
+/// Lista las secciones activas en el orden canónico de la spec (RF-9 a RF-11,
+/// RF-24): `1ro`→`5to` y, dentro de cada grado, la subdivisión en orden
+/// alfabético. `grado` filtra por uno solo (RF-10).
+///
+/// El array del `ORDER BY` de `list_active.sql` se construye acá desde
+/// `Grado::TODOS` (una sola fuente de verdad para el orden); pasarlo como
+/// `None` mantiene el orden canónico y deja fuera el filtro.
+pub async fn listar_activas(
+    pool: impl PgExecutor<'_>,
+    grado: Option<Grado>,
+) -> sqlx::Result<Vec<Seccion>> {
+    let orden_canonico: Vec<String> = Grado::TODOS
+        .iter()
+        .map(|grado| grado.as_str().to_string())
+        .collect();
+
+    let filas = sqlx::query_file_as!(
+        FilaConShift,
+        "src/modules/sections/queries/list_active.sql",
+        grado.map(|grado| grado.as_str()),
+        &orden_canonico,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(filas.into_iter().map(FilaConShift::en_seccion).collect())
 }
