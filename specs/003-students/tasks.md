@@ -30,6 +30,7 @@ limpia (todo lo que crean los tests se descarta con el `rollback`).
 - [x] **T3. `create.sql` + `crear`.** RF-1, RF-3, RF-4, RF-5, RF-21
 - [x] **T4. `get_by_id.sql` + `list_by_section.sql` + `consultar` + `listar_por_seccion`.** RF-8, RF-9, RF-10, RF-11, RNF-3, casos límite (sección inactiva consultable)
 - [x] **T5. `update.sql` + `editar`.** RF-12, RF-13, RF-14, RF-15, RF-16
+- [x] **T6. `set_active.sql` + `baja`/`reactivar` idempotentes.** RF-17, RF-18, RF-19, RF-20, RF-21
   - `ErrorEstudiante` en `queries.rs`, `verificar_seccion` (existe + activa)
     dentro de la misma tx, `create.sql` con `RETURNING`, auditoría "alta" en
     la misma transacción (RNF-2).

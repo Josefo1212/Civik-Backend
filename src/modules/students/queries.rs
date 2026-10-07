@@ -248,3 +248,40 @@ pub async fn editar(
 
     Ok(fila)
 }
+
+/// Marca a un estudiante activo o inactivo según `activo` (RF-17, RF-19),
+/// de forma idempotente (RF-18, RF-20).
+///
+/// `set_active.sql` solo actualiza si el estado cambia (`IS DISTINCT FROM`);
+/// cuando no devuelve filas hay dos posibilidades que la base no separa:
+/// si el estudiante no existe, responde `EstudianteNoExiste`; si existe, ya
+/// estaba en el estado pedido y se devuelve tal cual (sin mover `updated_at`).
+///
+/// La auditoría (RF-21) se escribe únicamente cuando el estado cambió de
+/// verdad: repetir la llamada "no modifica nada" y no debe dejar una entrada
+/// falsa en el historial.
+pub async fn set_active(
+    tx: &mut PgTransaction<'_>,
+    id: Uuid,
+    activo: bool,
+) -> Result<Estudiante, ErrorEstudiante> {
+    let fila = sqlx::query_file_as!(
+        Estudiante,
+        "src/modules/students/queries/set_active.sql",
+        id,
+        activo,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    let Some(fila) = fila else {
+        // Sin filas: inexistente o idempotente. `consultar` separa los dos.
+        return consultar(&mut **tx, id).await;
+    };
+
+    let accion = if activo { "reactivar" } else { "baja" };
+    let payload = json!({ "activo": activo });
+    audit::write_audit_log_tx(tx, "students", fila.id, accion, Some(&payload)).await?;
+
+    Ok(fila)
+}

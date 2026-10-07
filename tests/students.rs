@@ -20,7 +20,7 @@ use civik_backend::modules::sections::domain::{DatosSeccion, Grado, Turno};
 use civik_backend::modules::sections::queries as secciones;
 use civik_backend::modules::students::domain::{preparar_entrada, DatosEstudiante};
 use civik_backend::modules::students::queries::{
-    consultar, crear, editar, listar_por_seccion, ErrorEstudiante,
+    consultar, crear, editar, listar_por_seccion, set_active, ErrorEstudiante,
 };
 use civik_backend::shared::error::AppError;
 use uuid::Uuid;
@@ -447,6 +447,223 @@ async fn dos_estudiantes_sin_cedula_conviven() -> Resultado {
     .await?;
 
     assert_eq!(sin_cedula, 2);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn la_baja_marca_inactivo_y_lo_omite_del_listado_por_defecto() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e24").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    let bajado = set_active(&mut tx, estudiante.id, false).await?;
+
+    assert!(
+        !bajado.active,
+        "RF-17: la baja lo marca inactivo sin borrarlo"
+    );
+    let leido = consultar(&mut *tx, estudiante.id).await?;
+    assert!(!leido.active, "RF-8: el listado por defecto lo omite");
+    assert_eq!(
+        listar_por_seccion(&mut tx, seccion.id, false).await?.len(),
+        0
+    );
+    assert_eq!(
+        listar_por_seccion(&mut tx, seccion.id, true).await?.len(),
+        1
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn bajar_dos_veces_no_modifica_nada_y_es_exitoso() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e25").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    let primera = set_active(&mut tx, estudiante.id, false).await?;
+    let (updated_tras_baja,) = sqlx::query_as::<
+        _,
+        (sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,),
+    >("SELECT updated_at FROM students WHERE id = $1")
+    .bind(estudiante.id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    // RF-18: segundo "baja" sobre el mismo estudiante: misma fila, mismo
+    // `updated_at`, respuesta de éxito.
+    let segunda = set_active(&mut tx, estudiante.id, false).await?;
+    let (updated_tras_repetir,) = sqlx::query_as::<
+        _,
+        (sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,),
+    >("SELECT updated_at FROM students WHERE id = $1")
+    .bind(estudiante.id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    assert_eq!(primera.id, segunda.id);
+    assert!(!segunda.active);
+    assert_eq!(
+        updated_tras_baja, updated_tras_repetir,
+        "RF-18: repetir la baja no modifica nada"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn la_reactivacion_vuelve_el_estudiante_al_listado() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e26").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+    set_active(&mut tx, estudiante.id, false).await?;
+
+    let reactivado = set_active(&mut tx, estudiante.id, true).await?;
+
+    assert!(reactivado.active, "RF-19: la reactivación lo vuelve activo");
+    assert_eq!(
+        listar_por_seccion(&mut tx, seccion.id, false).await?.len(),
+        1
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn reactivar_dos_veces_no_modifica_nada() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e27").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    set_active(&mut tx, estudiante.id, true).await?;
+    let (updated_primera,) = sqlx::query_as::<
+        _,
+        (sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,),
+    >("SELECT updated_at FROM students WHERE id = $1")
+    .bind(estudiante.id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let segunda = set_active(&mut tx, estudiante.id, true).await?;
+    let (updated_segunda,) = sqlx::query_as::<
+        _,
+        (sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,),
+    >("SELECT updated_at FROM students WHERE id = $1")
+    .bind(estudiante.id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    assert!(segunda.active);
+    assert_eq!(
+        updated_primera, updated_segunda,
+        "RF-20: repetir la reactivación no modifica nada"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn la_baja_y_la_reactivacion_de_un_estudiante_inexistente_no_se_encontraron() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let inexistente = Uuid::new_v4();
+    assert!(matches!(
+        set_active(&mut tx, inexistente, false).await,
+        Err(ErrorEstudiante::EstudianteNoExiste)
+    ));
+    assert!(matches!(
+        set_active(&mut tx, inexistente, true).await,
+        Err(ErrorEstudiante::EstudianteNoExiste)
+    ));
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn la_baja_idempotente_no_deja_auditoria_falsa() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e28").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    set_active(&mut tx, estudiante.id, false).await?;
+    set_active(&mut tx, estudiante.id, false).await?;
+
+    // RF-21: solo la primera cambió algo y dejó su "baja"; la repetida no
+    // escribe una entrada falsa.
+    let bajas: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_logs \
+         WHERE entity = 'students' AND entity_id = $1 AND action = 'baja'",
+    )
+    .bind(estudiante.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    assert_eq!(bajas, 1, "RF-21: una sola entrada de baja de verdad");
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn la_reactivacion_deja_su_entrada_de_auditoria() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e29").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+    set_active(&mut tx, estudiante.id, false).await?;
+    set_active(&mut tx, estudiante.id, true).await?;
+
+    let reactor: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_logs \
+         WHERE entity = 'students' AND entity_id = $1 AND action = 'reactivar'",
+    )
+    .bind(estudiante.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    assert_eq!(reactor, 1, "RF-21: la reactivación de verdad se registra");
 
     tx.rollback().await?;
     Ok(())
