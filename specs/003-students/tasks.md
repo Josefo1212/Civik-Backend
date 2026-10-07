@@ -27,7 +27,7 @@ limpia (todo lo que crean los tests se descarta con el `rollback`).
   - Hecho cuando: clippy limpio y suite completa en verde (las pruebas de la
     Fase 2 adaptadas).
 
-- [ ] **T3. `create.sql` + `crear`.** RF-1, RF-3, RF-4, RF-5, RF-21
+- [x] **T3. `create.sql` + `crear`.** RF-1, RF-3, RF-4, RF-5, RF-21
   - `ErrorEstudiante` en `queries.rs`, `verificar_seccion` (existe + activa)
     dentro de la misma tx, `create.sql` con `RETURNING`, auditoría "alta" en
     la misma transacción (RNF-2).
