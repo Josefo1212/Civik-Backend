@@ -2,7 +2,7 @@ use crate::modules::sections::domain::DatosSeccion;
 use crate::shared::audit;
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use sqlx::{FromRow, PgTransaction};
+use sqlx::{FromRow, PgExecutor, PgTransaction};
 use uuid::Uuid;
 
 /// Una fila de `sections`, en la forma exacta que devuelven las queries.
@@ -23,11 +23,11 @@ pub struct Seccion {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Las seis columnas base de `RETURNING` en `create.sql`.
+/// Las seis columnas base de `RETURNING` en `create.sql` y `update.sql`.
 ///
 /// Separada de `Seccion` a propósito: el `RETURNING` no incluye `shift` (el
 /// enum y los casts se infieren como nulables en el macro de sqlx), así que la
-/// fila sale de la base sin esa columna y `crear` la rearma.
+/// fila sale de la base sin esa columna y `crear`/`editar` la rearman.
 #[derive(Debug, FromRow)]
 struct FilaBase {
     id: Uuid,
@@ -36,6 +36,38 @@ struct FilaBase {
     active: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+/// Una fila de `sections` con `shift` ya en texto (`get_by_id.sql` y
+/// `set_active.sql`), para las lecturas donde Rust no conoce el turno.
+///
+/// `shift` sale de `shift::text AS shift` y sqlx infiere las expresiones
+/// casteadas como nulables aunque la columna sea `NOT NULL`: por eso el campo
+/// es `Option<String>`. En la práctica nunca llega `None` — el esquema lo
+/// impide — y `en_seccion` lo normaliza a un `String` vacío por si acaso.
+#[derive(Debug, FromRow)]
+struct FilaConShift {
+    id: Uuid,
+    grade_level: String,
+    section: String,
+    shift: Option<String>,
+    active: bool,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl FilaConShift {
+    fn en_seccion(self) -> Seccion {
+        Seccion {
+            id: self.id,
+            grade_level: self.grade_level,
+            section: self.section,
+            shift: self.shift.unwrap_or_default(),
+            active: self.active,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
 }
 
 /// Da de alta una sección ya normalizada y deja su entrada de auditoría.
@@ -81,6 +113,124 @@ pub async fn crear(tx: &mut PgTransaction<'_>, datos: DatosSeccion) -> sqlx::Res
         "turno": datos.turno.as_str(),
     });
     audit::write_audit_log_tx(tx, "sections", fila.id, "alta", Some(&payload)).await?;
+
+    Ok(fila)
+}
+
+/// Edita los datos de identidad de una sección y deja su auditoría en la misma
+/// transacción (RF-27, RNF-2).
+///
+/// `datos` llega ya destinado por `domain::preparar_entrada`, el mismo punto
+/// único de normalización que usa el alta: por eso la edición normaliza igual
+/// que el alta (RF-14) y rechaza lo mismo (vacío / fuera de catálogo).
+///
+/// Si el `UPDATE` no toca ninguna fila, la sección no existe
+/// (`sqlx::Error::RowNotFound`, que el handler traducirá a 404). El `23505`
+/// sobre `uq_sections_grade_section_shift` sube tal cual y `AppError::from` lo
+/// traduce a `Conflict` (RF-17).
+pub async fn editar(
+    tx: &mut PgTransaction<'_>,
+    id: Uuid,
+    datos: DatosSeccion,
+) -> sqlx::Result<Seccion> {
+    // El RETURNING no trae `shift` (mismo criterio que `crear`): la fila se
+    // rearma con el turno ya normalizado.
+    let base = sqlx::query_file_as!(
+        FilaBase,
+        "src/modules/sections/queries/update.sql",
+        id,
+        datos.grado.as_str(),
+        &datos.seccion,
+        datos.turno.as_str(),
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    let Some(base) = base else {
+        return Err(sqlx::Error::RowNotFound);
+    };
+
+    let fila = Seccion {
+        id: base.id,
+        grade_level: base.grade_level,
+        section: base.section,
+        shift: datos.turno.as_str().to_string(),
+        active: base.active,
+        created_at: base.created_at,
+        updated_at: base.updated_at,
+    };
+
+    let payload = json!({
+        "grado": datos.grado.as_str(),
+        "seccion": datos.seccion,
+        "turno": datos.turno.as_str(),
+    });
+    audit::write_audit_log_tx(tx, "sections", fila.id, "editar", Some(&payload)).await?;
+
+    Ok(fila)
+}
+
+/// Una sección por su identificador, activa o dada de baja (RF-12).
+///
+/// Acepta un `PgExecutor` genérico porque hace una sola consulta y no lo reusa
+/// para una segunda llamada — el criterio que en `crear` obliga a
+/// `&mut PgTransaction` (el bloqueo de sqlx es reutilizar un executor para dos
+/// llamadas, no tomarlo prestado una vez). Si no existe, `RowNotFound`.
+pub async fn get_by_id<'e, E>(executor: E, id: Uuid) -> sqlx::Result<Seccion>
+where
+    E: PgExecutor<'e>,
+{
+    let base = sqlx::query_file_as!(
+        FilaConShift,
+        "src/modules/sections/queries/get_by_id.sql",
+        id,
+    )
+    .fetch_optional(executor)
+    .await?;
+
+    let Some(base) = base else {
+        return Err(sqlx::Error::RowNotFound);
+    };
+
+    Ok(base.en_seccion())
+}
+
+/// Marca una sección como activa o inactiva (RF-18/RF-20), de forma
+/// idempotente (RF-19/RF-21).
+///
+/// `set_active.sql` solo actualiza si cambia el estado (mérito de
+/// `IS DISTINCT FROM`); cuando no devuelve filas hay dos posibilidades que la
+/// base no separa, y `get_by_id` las distingue: si la sección no existe,
+/// devuelve `RowNotFound`; si existe, ya estaba en el estado pedido y se
+/// devuelve tal cual, sin mover `updated_at`.
+///
+/// La auditoría (RF-27) se escribe únicamente cuando el estado cambió de
+/// verdad: una llamada repetida "no modifica nada" (texto literal de RF-19 y
+/// RF-21) y no debe dejar una entrada falsa en el historial.
+pub async fn set_active(
+    tx: &mut PgTransaction<'_>,
+    id: Uuid,
+    activo: bool,
+) -> sqlx::Result<Seccion> {
+    let base = sqlx::query_file_as!(
+        FilaConShift,
+        "src/modules/sections/queries/set_active.sql",
+        id,
+        activo,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    let Some(base) = base else {
+        // El UPDATE no tocó ninguna fila: o la sección ya estaba en el estado
+        // pedido o no existe. `get_by_id` deja que el llamador distinga.
+        return get_by_id(&mut **tx, id).await;
+    };
+
+    let fila = base.en_seccion();
+    let accion = if activo { "reactivar" } else { "baja" };
+    let payload = json!({ "activo": activo });
+    audit::write_audit_log_tx(tx, "sections", fila.id, accion, Some(&payload)).await?;
 
     Ok(fila)
 }

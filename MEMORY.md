@@ -11,18 +11,22 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `config/database.rs`, `shared/{error,audit,round}.rs`, `GET /_health`.
   **Fases 0 y 1** de "Orden de construcción" (`AGENTS.md`) completas.
 - **Fase 2 — `sections`**, primer uso de SDD. Spec 002 **aprobada**
-  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T4 hechas**:
+  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T5 hechas**:
   migración `20261006010939_sections_active_and_not_blank` (`active`,
   `sections_not_blank`) con 7 tests en `tests/sections_migracion.rs`;
   `sections/domain.rs` con `Grado`/`Turno`, `preparar_entrada` y
   `ErrorDominio`, con 21 tests unitarios sin base de datos; la prueba de
   humo de auditoría + `Conflict` (`src/lib.rs`, `tests/audit.rs`,
   `AppError::Conflict` + `mapear_violacion` + `From<sqlx::Error>` en
-  `src/shared/error.rs`, probados con errores Postgres reales en
-  `tests/conflictos_bd.rs`); y el **alta** en `sections/queries.rs` +
-  `queries/create.sql` (`crear` sobre `&mut PgTransaction` con auditoría en
-  la misma tx) con 4 tests en `tests/sections.rs`. **46 tests**, clippy
-  **0/0**, `rustfmt` limpio. Sigue **T5**: edición, baja y reactivación.
+  `src/shared/error.rs`, con errores Postgres reales en
+  `tests/conflictos_bd.rs`); y el CRUD base en `sections/queries.rs` +
+  `queries/{create,update,get_by_id,set_active}.sql`: `crear`, `editar`,
+  `get_by_id` y `set_active` (idempotente con `IS DISTINCT FROM`), todos con
+  auditoría en la misma tx, 11 tests en `tests/sections.rs`. **55 tests**,
+  clippy **0/0**, `rustfmt` limpio. `_health` ya no miente: responde **503**
+  real cuando la base cae (antes `let _ =` y siempre 200), probado con
+  `tower::ServiceExt::oneshot` en `tests/health.rs`. Sigue **T6**:
+  eliminación física limitada (`delete.sql`).
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -68,11 +72,21 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   Postgres revalida el catálogo), el `RETURNING` omite la columna del enum, y
   la fila `Seccion.shift` es `String`. No pelear con `#[sqlx(type_name)]` en
   macros: no termina de funcionar y ensucia el dominio con sqlx.
+- **Dentro de una transacción, `now()` es constante**, así que el trigger
+  `set_updated_at` pisa `updated_at` con el mismo valor en cada UPDATE: no se
+  puede probar "no modifica nada" (RF-19/21) comparando timestamps. La prueba
+  honesta es `rows_affected() == 0` sobre el UPDATE en bruto.
+- **En un test que usa `connect_lazy`, acotar `acquire_timeout`**: el pool
+  espera 30 s por defecto a que la conexión (muerta) se establezca; con 3 s
+  el test de `_health` 503 baja de 30 s a instantáneo.
+- **`sqlx::query_as` con una sola columna no existe**: para `SELECT ... RETURNING id`
+  de un solo `Uuid` hay que usar `query_scalar`, no un `query_as` de un campo.
 
 ## Próximos pasos
 
-- **T5**: edición (`update.sql`), baja y reactivación (`set_active.sql`),
-  incluida la idempotencia (RF-19/RF-21) y la sección con estudiantes.
+- **T6**: eliminación física limitada (`delete.sql`), RF-22/RF-23, incluida la
+  sección con estudiantes activos e inactivos y la guía de **borrado antes de
+  la auditoría** para conservar los valores de la fila que desaparece.
 - Los `dead_code` de `shared/*` y el `#[allow(dead_code)]` de
   `sections/domain.rs` los limpia T9.
 
@@ -90,3 +104,8 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   sobre `&mut PgTransaction`, auditoría en la misma tx), 4 tests en
   `tests/sections.rs`. 46 tests totales. Enum `shift_type` resuelto con
   `$3::text::shift_type` y `Seccion.shift: String` (aprendizaje sqlx).
+- **Fase 2 — T5 + `_health` (2026-10-06)** — edición (`update.sql`, `editar`),
+  baja/reactivación (`set_active.sql` idempotente + `get_by_id.sql`),
+  auditoría solo cuando el estado cambió de verdad; 7 tests nuevos en
+  `tests/sections.rs`. `_health` 503 real con tests `oneshot`
+  (`tests/health.rs`, `tower` dev-dep). **55 tests totales**, clippy 0/0.

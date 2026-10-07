@@ -74,7 +74,7 @@ exista en la base, ningún `.sql` que la mencione compila.
     duplicada de una sección **dada de baja** también falla y no libera la
     combinación; queda la entrada de auditoría del alta.
 
-- [ ] **T5. `update.sql` y `set_active.sql`, con edición, baja y reactivación.**
+- [x] **T5. `update.sql` y `set_active.sql`, con edición, baja y reactivación.**
   RF-14, RF-15, RF-16, RF-17, RF-18, RF-19, RF-20, RF-21, RF-25, RF-26, RF-27
   - `update.sql` con `WHERE id = $1 RETURNING`.
   - `set_active.sql` con `active IS DISTINCT FROM $2` para que la operación
