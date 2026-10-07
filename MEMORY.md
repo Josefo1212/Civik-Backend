@@ -71,6 +71,21 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   que usan el skill `sdd` y los comandos `/sdd-*`.
 - `db/schema.sql` **se versiona**: es contra lo que se leen los diffs de
   esquema, no un artefacto local descartable.
+- **El peso de una nota depende de `type_event`, no del `source`**: una
+  práctica regular **manual** pesa `1`, igual que una AUTO (`PRACTICA_EXTRA`
+  → 0.5, `PRESENTACION` → 2).
+- **Una práctica regular manual puede crearse con fecha pasada** mientras el
+  lapso esté abierto (cubre la primera clase, que se pierde porque la app
+  aún no está lista), pero **solo en el `practice_day` del lapso** — mismo
+  espíritu de la regla 1, que la base solo exige para `AUTO` y el dominio de
+  Rust valida para `MANUAL`. `EXTRA`/`PRESENTACION` no tienen restricción de
+  día. La única frontera temporal real es el lapso `CLOSED`.
+- **`generar_practicas_auto` omite los `practice_day` que ya tengan una
+  práctica regular (AUTO *o* MANUAL)**: cada día de práctica tiene como
+  máximo una regular, la cree quien la cree. `uq_events_auto_one_per_day`
+  solo protege entre AUTO; esta regla cierra el hueco entre una regular
+  creada a mano y la del generador. Cuándo corre el generador y si mira
+  hacia atrás es decisión abierta de la fase 6 (spec 006).
 
 ## Aprendizajes y errores a evitar
 
