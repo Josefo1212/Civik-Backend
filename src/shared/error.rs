@@ -11,8 +11,10 @@ pub enum AppError {
     #[error("Error de base de datos: {0}")]
     Database(sqlx::Error),
 
-    #[error("Recurso no encontrado")]
-    NotFound,
+    // El mensaje distingue qué recurso no se encontró (sección, estudiante):
+    // un `404` mudo no le dice al instructor qué corregir (RNF-4).
+    #[error("{0}")]
+    NotFound(String),
 
     #[error("Solicitud inválida: {0}")]
     BadRequest(String),
@@ -30,7 +32,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, error_msg) = match &self {
             AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
-            AppError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
+            AppError::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
         };
@@ -52,16 +54,26 @@ impl IntoResponse for AppError {
 /// La clave foránea de `students` aparece en el mapa con **dos códigos**: un
 /// `DELETE` que toca una FK `ON DELETE RESTRICT` emite `23001`
 /// (restrict_violation), mientras que un `INSERT` con el padre inexistente
-/// emite `23503` (foreign_key_violation). El borrado de secciones (RF-23) cae
-/// en el primer caso; se conserva el segundo por si alguna vez una FK cambia a
-/// `NO ACTION`.
+/// emite `23503` (foreign_key_violation). El borrado de secciones (RF-23 de
+/// la 002) cae en el primer caso; se conserva el segundo por si alguna vez una
+/// FK cambia a `NO ACTION`.
+///
+/// `pub(crate)` y no `pub` a propósito: el mapeo es un detalle de la capa de
+/// código de Postgres, y solo los tests de ejecución (que generan el error
+/// real) y los unit tests de este mismo archivo necesitan verlo.
 ///
 /// Devuelve `None` para todo lo demás, y `From<sqlx::Error>` deja el error
 /// como `Database` (500): los errores de infraestructura no se traducen.
-fn mapear_violacion(codigo: Option<&str>, restriccion: Option<&str>) -> Option<AppError> {
+pub(crate) fn mapear_violacion(
+    codigo: Option<&str>,
+    restriccion: Option<&str>,
+) -> Option<AppError> {
     match (codigo, restriccion) {
         (Some("23505"), Some("uq_sections_grade_section_shift")) => Some(AppError::Conflict(
             "Esa combinación de grado, subdivisión y turno ya está en uso".to_string(),
+        )),
+        (Some("23505"), Some("uq_students_national_id")) => Some(AppError::Conflict(
+            "Ya existe un estudiante con esa cédula".to_string(),
         )),
         (Some("23001") | Some("23503"), Some("students_id_section_fkey")) => Some(
             AppError::Conflict("La sección tiene estudiantes".to_string()),
@@ -111,8 +123,18 @@ mod tests {
     #[test]
     fn duplicado_de_llave_primaria_no_es_conflict() {
         assert!(mapear_violacion(Some("23505"), Some("sections_pkey")).is_none());
-        assert!(mapear_violacion(Some("23505"), Some("uq_students_national_id")).is_none());
         assert!(mapear_violacion(Some("23505"), Some("uq_events_auto_one_per_day")).is_none());
+    }
+
+    #[test]
+    fn cedula_duplicada_es_conflict() {
+        // RF-5 de la spec 003: la cédula es única, también contra un
+        // estudiante inactivo — la restricción no distingue estados.
+        let error = mapear_violacion(Some("23505"), Some("uq_students_national_id")).unwrap();
+
+        assert!(matches!(error, AppError::Conflict(_)));
+        let mensaje = error.to_string();
+        assert!(mensaje.contains("cédula"), "mensaje: {mensaje}");
     }
 
     #[test]
@@ -144,6 +166,18 @@ mod tests {
     // --- Los mensajes están en español y no exponen detalle técnico ---
 
     #[test]
+    fn el_not_found_dice_que_recurso_falto() {
+        let error = AppError::NotFound("No se encontró el estudiante".into());
+        let mensaje = error.to_string();
+
+        assert!(
+            mensaje.contains("estudiante"),
+            "el 404 debe nombrar el recurso: {mensaje}"
+        );
+        assert_eq!(error.into_response().status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
     fn los_mensajes_de_conflict_estan_en_espanol() {
         let duplicado =
             mapear_violacion(Some("23505"), Some("uq_sections_grade_section_shift")).unwrap();
@@ -172,7 +206,9 @@ mod tests {
     #[test]
     fn los_demas_errores_conservan_su_codigo() {
         assert_eq!(
-            AppError::NotFound.into_response().status(),
+            AppError::NotFound("No se encontró la sección".into())
+                .into_response()
+                .status(),
             StatusCode::NOT_FOUND
         );
         assert_eq!(

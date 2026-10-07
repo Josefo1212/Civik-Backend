@@ -50,7 +50,7 @@ fn dominios_a_bad_request(error: ErrorDominio) -> AppError {
 /// fallo del servidor: se traduce antes de que el `?` lo envuelva.
 fn a_not_found(error: sqlx::Error) -> AppError {
     match error {
-        sqlx::Error::RowNotFound => AppError::NotFound,
+        sqlx::Error::RowNotFound => AppError::NotFound("No se encontró la sección".into()),
         otro => otro.into(),
     }
 }

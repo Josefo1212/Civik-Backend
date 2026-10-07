@@ -15,7 +15,7 @@ limpia (todo lo que crean los tests se descarta con el `rollback`).
   - Hecho cuando: `cargo test` en verde solo con estos unit tests,
     `cargo clippy --all-targets -- -D warnings` limpio.
 
-- [ ] **T2. Infra de errores: `NotFound(String)` y la cédula como `Conflict`.**
+- [x] **T2. Infra de errores: `NotFound(String)` y la cédula como `Conflict`.**
   RF-3, RF-5
   - `src/shared/error.rs`: `AppError::NotFound(String)`; arm
     `(23505, students_national_id_key)` → `Conflict("Ya existe un estudiante
