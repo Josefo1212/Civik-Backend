@@ -11,7 +11,7 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `config/database.rs`, `shared/{error,audit,round}.rs`, `GET /_health`.
   **Fases 0 y 1** de "Orden de construcción" (`AGENTS.md`) completas.
 - **Fase 2 — `sections`**, primer uso de SDD. Spec 002 **aprobada**
-  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T5 hechas**:
+  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T6 hechas**:
   migración `20261006010939_sections_active_and_not_blank` (`active`,
   `sections_not_blank`) con 7 tests en `tests/sections_migracion.rs`;
   `sections/domain.rs` con `Grado`/`Turno`, `preparar_entrada` y
@@ -19,14 +19,15 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   humo de auditoría + `Conflict` (`src/lib.rs`, `tests/audit.rs`,
   `AppError::Conflict` + `mapear_violacion` + `From<sqlx::Error>` en
   `src/shared/error.rs`, con errores Postgres reales en
-  `tests/conflictos_bd.rs`); y el CRUD base en `sections/queries.rs` +
-  `queries/{create,update,get_by_id,set_active}.sql`: `crear`, `editar`,
-  `get_by_id` y `set_active` (idempotente con `IS DISTINCT FROM`), todos con
-  auditoría en la misma tx, 11 tests en `tests/sections.rs`. **55 tests**,
-  clippy **0/0**, `rustfmt` limpio. `_health` ya no miente: responde **503**
-  real cuando la base cae (antes `let _ =` y siempre 200), probado con
-  `tower::ServiceExt::oneshot` en `tests/health.rs`. Sigue **T6**:
-  eliminación física limitada (`delete.sql`).
+  `tests/conflictos_bd.rs`); el CRUD base en `sections/queries.rs` +
+  `queries/{create,update,get_by_id,set_active,delete}.sql`: `crear`,
+  `editar`, `get_by_id`, `set_active` (idempotente con `IS DISTINCT FROM`) y
+  `eliminar` (auditoría antes del borrado, 4 tests), todos con auditoría en
+  la misma tx, 15 tests en `tests/sections.rs`. **60 tests**, clippy **0/0**.
+  `_health` ya no miente: responde **503** real cuando la base cae (antes
+  `let _ =` y siempre 200), probado con `tower::ServiceExt::oneshot` en
+  `tests/health.rs`. Sigue **T7**: lecturas (`get_by_id.sql` y
+  `list_active.sql`).
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -81,12 +82,24 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   el test de `_health` 503 baja de 30 s a instantáneo.
 - **`sqlx::query_as` con una sola columna no existe**: para `SELECT ... RETURNING id`
   de un solo `Uuid` hay que usar `query_scalar`, no un `query_as` de un campo.
+- **Un `DELETE` contra una FK `ON DELETE RESTRICT` emite `23001`
+  (restrict_violation), NO `23503`**: el `23503` es de INSERT (NO ACTION).
+  `mapear_violacion` matchea `students_id_section_fkey` con ambos códigos; se
+  cazó porque un test **real** de borrado (T6) devolvió 500 donde se esperaba
+  409 — los tests unitarios con códigos a mano no alcanzan si no hay un test
+  de integración que ejercite la consulta real. Lección: el mapeo de
+  conflictos se prueba contra Postgres de verdad, no solo en memoria.
+- **Postgres aborta la transacción al primer error** y ningún query posterior
+  funciona hasta `ROLLBACK`. Para verificar el estado tras un fallo esperado
+  en un test, el intento va dentro de un savepoint. **sqlx 0.8 no expone
+  savepoints**: se hacen con SQL directo (`SAVEPOINT x` / `ROLLBACK TO
+  SAVEPOINT x`) sobre la misma transacción.
+- Un error Postgres también puede dejar `query_scalar` sin deducir el tipo de
+  salida: anotar `let id: Uuid = query_scalar(...)` explícitamente.
 
 ## Próximos pasos
 
-- **T6**: eliminación física limitada (`delete.sql`), RF-22/RF-23, incluida la
-  sección con estudiantes activos e inactivos y la guía de **borrado antes de
-  la auditoría** para conservar los valores de la fila que desaparece.
+- **T7**: lecturas (`get_by_id.sql` y `list_active.sql`), con `listar_activas`.
 - Los `dead_code` de `shared/*` y el `#[allow(dead_code)]` de
   `sections/domain.rs` los limpia T9.
 
@@ -109,3 +122,9 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   auditoría solo cuando el estado cambió de verdad; 7 tests nuevos en
   `tests/sections.rs`. `_health` 503 real con tests `oneshot`
   (`tests/health.rs`, `tower` dev-dep). **55 tests totales**, clippy 0/0.
+- **Fase 2 — T6 (2026-10-06)** — `delete.sql` + `eliminar` (auditoría antes
+  del borrado), 4 tests en `tests/sections.rs`. **Hallazgo**: el mapeo a
+  `Conflict` no funcionaba con el borrado real porque una FK `RESTRICT`
+  emite `23001`, no `23503`; `mapear_violacion` cubre ambos y se agregó el
+  test de integración real en `tests/conflictos_bd.rs` (4). Savepoints por
+  SQL directo (sqlx 0.8 no los expone). **60 tests totales**, clippy 0/0.

@@ -85,7 +85,7 @@ exista en la base, ningún `.sql` que la mencione compila.
     dos veces devuelven éxito **sin que cambie `updated_at`**; editar y dar
     de baja una sección con estudiantes los deja en ella.
 
-- [ ] **T6. `delete.sql`, con la eliminación física limitada.**
+- [x] **T6. `delete.sql`, con la eliminación física limitada.**
   RF-22, RF-23, RF-27
   - `DELETE ... WHERE id = $1 RETURNING`, sin filtro por `active`.
   - La auditoría se escribe en la misma transacción, antes del borrado, para

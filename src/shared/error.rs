@@ -49,6 +49,13 @@ impl IntoResponse for AppError {
 /// `uq_sections_grade_section_shift` pero "id repetido" sobre `sections_pkey`.
 /// Mapear solo el código devolvería un 409 con un mensaje falso.
 ///
+/// La clave foránea de `students` aparece en el mapa con **dos códigos**: un
+/// `DELETE` que toca una FK `ON DELETE RESTRICT` emite `23001`
+/// (restrict_violation), mientras que un `INSERT` con el padre inexistente
+/// emite `23503` (foreign_key_violation). El borrado de secciones (RF-23) cae
+/// en el primer caso; se conserva el segundo por si alguna vez una FK cambia a
+/// `NO ACTION`.
+///
 /// Devuelve `None` para todo lo demás, y `From<sqlx::Error>` deja el error
 /// como `Database` (500): los errores de infraestructura no se traducen.
 fn mapear_violacion(codigo: Option<&str>, restriccion: Option<&str>) -> Option<AppError> {
@@ -56,9 +63,9 @@ fn mapear_violacion(codigo: Option<&str>, restriccion: Option<&str>) -> Option<A
         (Some("23505"), Some("uq_sections_grade_section_shift")) => Some(AppError::Conflict(
             "Esa combinación de grado, subdivisión y turno ya está en uso".to_string(),
         )),
-        (Some("23503"), Some("students_id_section_fkey")) => Some(AppError::Conflict(
-            "La sección tiene estudiantes".to_string(),
-        )),
+        (Some("23001") | Some("23503"), Some("students_id_section_fkey")) => Some(
+            AppError::Conflict("La sección tiene estudiantes".to_string()),
+        ),
         _ => None,
     }
 }
@@ -107,11 +114,14 @@ mod tests {
 
     #[test]
     fn borrar_seccion_con_estudiantes_es_conflict() {
-        let error = mapear_violacion(Some("23503"), Some("students_id_section_fkey")).unwrap();
-
-        assert!(matches!(error, AppError::Conflict(_)));
-        let mensaje = error.to_string();
-        assert!(mensaje.contains("estudiantes"), "mensaje: {mensaje}");
+        // `23001` (RESTRICT sobre DELETE) es el código real del borrado;
+        // `23503` (NO ACTION) el de un INSERT con la sección inexistente.
+        for codigo in ["23001", "23503"] {
+            let error = mapear_violacion(Some(codigo), Some("students_id_section_fkey")).unwrap();
+            assert!(matches!(error, AppError::Conflict(_)));
+            let mensaje = error.to_string();
+            assert!(mensaje.contains("estudiantes"), "mensaje: {mensaje}");
+        }
     }
 
     #[test]

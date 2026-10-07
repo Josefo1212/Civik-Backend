@@ -234,3 +234,40 @@ pub async fn set_active(
 
     Ok(fila)
 }
+
+/// Elimina físicamente una sección **solo si no tiene estudiantes** (RF-22 y
+/// RF-23) y deja su auditoría en la misma transacción (RF-27, RNF-2).
+///
+/// La auditoría se escribe **antes** del borrado, para conservar los valores
+/// de la fila que desaparece; si el `DELETE` falla o la transacción se aborta,
+/// el registro se descarta junto con ella y no queda una "eliminación"
+/// fantasma.
+///
+/// Si la sección no existe, `get_by_id` devuelve `RowNotFound`. El `23503` de
+/// `students_id_section_fkey` sube desde el `DELETE` y `AppError::from` lo
+/// traduce a `Conflict` — "la sección tiene estudiantes" — sin importar si el
+/// estudiante está activo o inactivo. No hay filtro por `active`: una sección
+/// dada de baja que nunca tuvo estudiantes también se elimina.
+pub async fn eliminar(tx: &mut PgTransaction<'_>, id: Uuid) -> sqlx::Result<Seccion> {
+    let fila = get_by_id(&mut **tx, id).await?;
+
+    let payload = json!({
+        "grado": fila.grade_level,
+        "seccion": fila.section,
+        "turno": fila.shift,
+        "activo": fila.active,
+    });
+    audit::write_audit_log_tx(tx, "sections", fila.id, "eliminar", Some(&payload)).await?;
+
+    // El RETURNING confirma que el borrado ocurrió de verdad; el 23503 se
+    // propaga acá, nunca llega un `None` acompañado de fila viva.
+    let base = sqlx::query_file_as!(FilaConShift, "src/modules/sections/queries/delete.sql", id,)
+        .fetch_optional(&mut **tx)
+        .await?;
+
+    let Some(base) = base else {
+        return Err(sqlx::Error::RowNotFound);
+    };
+
+    Ok(base.en_seccion())
+}

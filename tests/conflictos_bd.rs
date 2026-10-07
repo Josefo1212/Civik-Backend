@@ -62,6 +62,11 @@ async fn borrado_violado_con_estudiantes_real_se_convierte_en_409() -> Resultado
     let pool = common::pool().await?;
     let mut tx = pool.begin().await?;
 
+    // Ojo con el código: un INSERT con la sección inexistente emite `23503`
+    // (foreign_key_violation, NO ACTION), pero el DELETE sobre la FK
+    // `ON DELETE RESTRICT` de secciones emite `23001` (restrict_violation).
+    // El `mapear_violacion` acepta ambos sobre la misma restricción; el caso
+    // `23001` real se prueba por separado en `borrado_real_de_seccion...`.
     let resultado = sqlx::query(
         "INSERT INTO students (id_section, first_name, last_name) VALUES ($1, 'Ana', 'Pérez')",
     )
@@ -89,6 +94,63 @@ async fn borrado_violado_con_estudiantes_real_se_convierte_en_409() -> Resultado
     assert!(
         mensaje.contains("estudiantes"),
         "el mensaje debe nombrar el problema: {mensaje}"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn borrado_real_de_una_seccion_con_estudiantes_emite_23001_y_es_conflict() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let id_seccion: Uuid = sqlx::query_scalar(
+        "INSERT INTO sections (grade_level, section, shift)
+         VALUES ('1ro', 'a', 'MATUTINO') RETURNING id",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO students (id_section, first_name, last_name) VALUES ($1, 'Ana', 'Pérez')",
+    )
+    .bind(id_seccion)
+    .execute(&mut *tx)
+    .await?;
+
+    // Este es el caso REAL del borrado de sección (RF-23): el `ON DELETE
+    // RESTRICT` de la FK responde con `23001`, no con `23503`. Sin este test,
+    // el mapeo a `Conflict` quedaría probado solo con la variante de INSERT.
+    let resultado = sqlx::query("DELETE FROM sections WHERE id = $1")
+        .bind(id_seccion)
+        .execute(&mut *tx)
+        .await;
+
+    let Err(error) = resultado else {
+        panic!("borrar una sección con estudiantes debe violar students_id_section_fkey");
+    };
+
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23001"));
+        assert_eq!(base.constraint(), Some("students_id_section_fkey"));
+    } else {
+        panic!("esperaba un error de base de datos, llegó: {error}");
+    }
+
+    let app_error: AppError = error.into();
+    assert!(
+        matches!(app_error, AppError::Conflict(_)),
+        "esperaba Conflict, llegó: {app_error}"
+    );
+    let mensaje = app_error.to_string();
+    assert!(
+        mensaje.contains("estudiantes"),
+        "el mensaje debe nombrar el problema: {mensaje}"
+    );
+    assert_eq!(
+        app_error.into_response().status(),
+        axum::http::StatusCode::CONFLICT
     );
 
     tx.rollback().await?;

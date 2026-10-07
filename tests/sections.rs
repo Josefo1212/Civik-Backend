@@ -14,7 +14,12 @@
 //!   fila y no deja una entrada de auditoría falsa.
 //! - RF-25, RF-26: editar o dar de baja una sección con estudiantes los deja
 //!   en ella.
-//! - RF-27: alta, edición, baja y reactivación dejan su auditoría.
+//! - RF-22: eliminar una sección sin estudiantes la borra de verdad; una dada
+//!   de baja que nunca tuvo estudiantes también.
+//! - RF-23: eliminar con un estudiante (activo o inactivo) se rechaza con
+//!   "la sección tiene estudiantes" y la fila sigue.
+//! - RF-27: alta, edición, baja, reactivación y eliminación dejan su
+//!   auditoría.
 //!
 //! Los casos de validación pura (RF-5/6/7) ya viven en los tests de
 //! `domain.rs`; acá se ejercita el camino completo hasta la base de datos.
@@ -22,7 +27,7 @@
 mod common;
 
 use civik_backend::modules::sections::domain::preparar_entrada;
-use civik_backend::modules::sections::queries::{crear, editar, set_active, Seccion};
+use civik_backend::modules::sections::queries::{crear, editar, eliminar, set_active, Seccion};
 use civik_backend::shared::error::AppError;
 use uuid::Uuid;
 
@@ -430,6 +435,170 @@ async fn editar_y_dar_de_baja_una_seccion_con_estudiantes_los_deja_en_ella() -> 
         !sigue_inactivo,
         "el alumno inactivo también permanece en la sección"
     );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn eliminar_una_seccion_vacia_la_borra_y_deja_auditoria() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear(&mut tx, preparar_entrada("1ro", "a", "MATUTINO")?).await?;
+
+    let borrada = eliminar(&mut tx, seccion.id).await?;
+    assert_eq!(
+        borrada.id, seccion.id,
+        "RF-22: devuelve la fila que se borró"
+    );
+
+    let quedan: i64 = sqlx::query_scalar("SELECT count(*) FROM sections WHERE id = $1")
+        .bind(seccion.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    assert_eq!(quedan, 0, "RF-22: la sección se elimina de verdad");
+
+    // RF-27: el registro de la eliminación sobrevive y conserva los valores.
+    // Se filtra por acción porque la sección ya dejó su auditoría de "alta".
+    let (action, data_raw): (String, String) = sqlx::query_as(
+        "SELECT action, data::text FROM audit_logs WHERE entity_id = $1 AND action = 'eliminar'",
+    )
+    .bind(seccion.id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    assert_eq!(action, "eliminar");
+    let data: serde_json::Value = serde_json::from_str(&data_raw)?;
+    assert_eq!(data["grado"], "1ro");
+    assert_eq!(data["turno"], "MATUTINO");
+    assert_eq!(data["activo"], true);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn eliminar_una_seccion_con_estudiante_activo_falla_y_la_fila_sigue() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear(&mut tx, preparar_entrada("1ro", "a", "MATUTINO")?).await?;
+
+    sqlx::query(
+        "INSERT INTO students (id_section, first_name, last_name)
+         VALUES ($1, 'Ana', 'Perez')",
+    )
+    .bind(seccion.id)
+    .execute(&mut *tx)
+    .await?;
+
+    // El DELETE falla y Postgres deja la transacción ABORTADA: ningún query
+    // posterior funciona en la misma transacción. Para comprobar que la fila
+    // quedó intacta, el intento vive en un savepoint y se deshace justo al
+    // volver de él; `ROLLBACK TO SAVEPOINT` recupera también el estado del
+    // "current transaction is aborted". (sqlx 0.8 no expone savepoints; se
+    // hacen con SQL directo sobre la transacción.)
+    sqlx::query("SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
+    let resultado = eliminar(&mut tx, seccion.id).await;
+
+    let Err(error) = resultado else {
+        panic!("eliminar una sección con estudiantes debe fallar (RF-23)");
+    };
+
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23001"));
+        assert_eq!(base.constraint(), Some("students_id_section_fkey"));
+    } else {
+        panic!("esperaba un error de base de datos, llegó: {error}");
+    }
+
+    let app_error: AppError = error.into();
+    assert!(matches!(app_error, AppError::Conflict(_)));
+    assert!(
+        app_error.to_string().contains("estudiantes"),
+        "el mensaje debe decir que la sección tiene estudiantes: {app_error}"
+    );
+
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
+
+    let quedan: i64 = sqlx::query_scalar("SELECT count(*) FROM sections WHERE id = $1")
+        .bind(seccion.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    assert_eq!(quedan, 1, "RF-23: la fila sigue existiendo");
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn eliminar_una_seccion_con_estudiante_inactivo_tambien_falla() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear(&mut tx, preparar_entrada("1ro", "a", "MATUTINO")?).await?;
+
+    sqlx::query(
+        "INSERT INTO students (id_section, first_name, last_name, active)
+         VALUES ($1, 'Luis', 'Diaz', false)",
+    )
+    .bind(seccion.id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query("SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
+    let resultado = eliminar(&mut tx, seccion.id).await;
+
+    let Err(error) = resultado else {
+        panic!("eliminar con un estudiante inactivo también debe fallar (RF-23, caso límite)");
+    };
+
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23001"));
+        assert_eq!(base.constraint(), Some("students_id_section_fkey"));
+    } else {
+        panic!("esperaba un error de base de datos, llegó: {error}");
+    }
+
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
+
+    let quedan: i64 = sqlx::query_scalar("SELECT count(*) FROM sections WHERE id = $1")
+        .bind(seccion.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    assert_eq!(quedan, 1);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn eliminar_una_seccion_dada_de_baja_sin_estudiantes_tambien_la_borra() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear(&mut tx, preparar_entrada("1ro", "a", "MATUTINO")?).await?;
+    set_active(&mut tx, seccion.id, false).await?;
+
+    // El DELETE no filtra por `active`: una sección dada de baja que nunca tuvo
+    // estudiantes se elimina igual (caso límite documentado en el plan §6).
+    let borrada = eliminar(&mut tx, seccion.id).await?;
+    assert_eq!(borrada.id, seccion.id);
+
+    let quedan: i64 = sqlx::query_scalar("SELECT count(*) FROM sections WHERE id = $1")
+        .bind(seccion.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    assert_eq!(quedan, 0);
 
     tx.rollback().await?;
     Ok(())
