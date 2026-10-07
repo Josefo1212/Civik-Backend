@@ -19,7 +19,9 @@ mod common;
 use civik_backend::modules::sections::domain::{DatosSeccion, Grado, Turno};
 use civik_backend::modules::sections::queries as secciones;
 use civik_backend::modules::students::domain::preparar_entrada;
-use civik_backend::modules::students::queries::{crear, ErrorEstudiante};
+use civik_backend::modules::students::queries::{
+    consultar, crear, listar_por_seccion, ErrorEstudiante,
+};
 use civik_backend::shared::error::AppError;
 use uuid::Uuid;
 
@@ -212,6 +214,208 @@ async fn la_cedula_de_un_estudiante_inactivo_no_se_libera() -> Resultado {
         matches!(resultado, Err(ErrorEstudiante::Sqlx(_))),
         "la cédula de un inactivo sigue ocupada (RF-5, caso límite): {resultado:?}"
     );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn consultar_devuelve_el_estudiante_incluido_su_estado() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e7").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", Some("V-400")).await,
+    )
+    .await?;
+
+    let leido = consultar(&mut *tx, estudiante.id).await?;
+    assert_eq!(leido.id, estudiante.id, "RF-10: consulta por id");
+    assert_eq!(leido.id_section, seccion.id, "RF-10: dice su sección");
+    assert_eq!(leido.first_name, "Ana");
+    assert!(leido.active, "RF-10: dice su estado");
+
+    // Un estudiante dado de baja también se consulta, marcado como inactivo
+    // (caso límite de la spec).
+    sqlx::query("UPDATE students SET active = false WHERE id = $1")
+        .bind(estudiante.id)
+        .execute(&mut *tx)
+        .await?;
+
+    let leido = consultar(&mut *tx, estudiante.id).await?;
+    assert!(
+        !leido.active,
+        "el inactivo se devuelve marcado como inactivo"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn consultar_un_identificador_inexistente_responde_que_no_se_encontro() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let resultado = consultar(&mut *tx, Uuid::new_v4()).await;
+
+    assert!(
+        matches!(resultado, Err(ErrorEstudiante::EstudianteNoExiste)),
+        "id inexistente → EstudianteNoExiste (RF-11), llegó: {resultado:?}"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_listado_por_defecto_devuelve_solo_activos_en_orden() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e8").await;
+    let ana = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "Pérez", "Ana", None).await,
+    )
+    .await?;
+    crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "luis", None).await,
+    )
+    .await?;
+    crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "Pérez", "beatriz", None).await,
+    )
+    .await?;
+    // Uno inactivo: no debe aparecer en el listado por defecto (RF-17).
+    sqlx::query("UPDATE students SET active = false WHERE id = $1")
+        .bind(ana.id)
+        .execute(&mut *tx)
+        .await?;
+
+    let listado = listar_por_seccion(
+        &mut tx, seccion.id, false, // RF-8: por defecto, solo activos
+    )
+    .await?;
+
+    let orden: Vec<(String, String)> = listado
+        .iter()
+        .map(|estudiante| (estudiante.last_name.clone(), estudiante.first_name.clone()))
+        .collect();
+    assert_eq!(
+        orden,
+        vec![
+            ("García".to_string(), "luis".to_string()),
+            ("Pérez".to_string(), "beatriz".to_string()),
+        ],
+        "ordena por lower(apellido), lower(nombre) e ignora mayúsculas"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn incluir_inactivas_devuelve_tambien_las_inactivas_marcadas() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e9").await;
+    let inactivo = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "Rojas", "Carlos", None).await,
+    )
+    .await?;
+    crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "Acosta", "María", None).await,
+    )
+    .await?;
+    sqlx::query("UPDATE students SET active = false WHERE id = $1")
+        .bind(inactivo.id)
+        .execute(&mut *tx)
+        .await?;
+
+    let listado = listar_por_seccion(&mut tx, seccion.id, true).await?;
+
+    assert_eq!(listado.len(), 2, "RF-9: incluye a los inactivos");
+    assert!(
+        listado.iter().any(|estudiante| !estudiante.active),
+        "RF-9: la lista marca el estado de cada uno"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_listado_de_una_seccion_inactiva_sigue_funcionando() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e10").await;
+    crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+    secciones::set_active(&mut tx, seccion.id, false).await?;
+
+    // La sección dada de baja no recibe cupos nuevos, pero su padrón sigue
+    // siendo consultable (caso límite de la spec).
+    let listado = listar_por_seccion(&mut tx, seccion.id, false).await?;
+    assert_eq!(listado.len(), 1);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_listado_de_una_seccion_inexistente_responde_que_no_existe() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let resultado = listar_por_seccion(&mut tx, Uuid::new_v4(), false).await;
+
+    assert!(
+        matches!(resultado, Err(ErrorEstudiante::SeccionNoExiste)),
+        "sección inexistente → SeccionNoExiste (RF-11 del listado), llegó: {resultado:?}"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_orden_del_listado_es_estable_entre_llamadas() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e11").await;
+    crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+    crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    // RNF-3: dos dispositivos sin conexión deben poder reconciliar; el orden
+    // no cambia entre llamadas ni entre estudiantes de nombre idéntico.
+    let primera = listar_por_seccion(&mut tx, seccion.id, false).await?;
+    let segunda = listar_por_seccion(&mut tx, seccion.id, false).await?;
+
+    assert_eq!(primera.len(), 2);
+    let ids_primera: Vec<Uuid> = primera.iter().map(|e| e.id).collect();
+    let ids_segunda: Vec<Uuid> = segunda.iter().map(|e| e.id).collect();
+    assert_eq!(ids_primera, ids_segunda, "el orden must ser determinista");
 
     tx.rollback().await?;
     Ok(())

@@ -142,3 +142,54 @@ pub async fn crear(
 
     Ok(fila)
 }
+
+/// Un estudiante por su identificador, activo o inactivo (RF-10); si no
+/// existe, `EstudianteNoExiste` (RF-11).
+///
+/// Acepta un `PgExecutor` genérico porque hace una sola consulta y no lo
+/// reusa para una segunda llamada (mismo criterio que `sections::get_by_id`).
+pub async fn consultar<'e, E>(conn: E, id: Uuid) -> Result<Estudiante, ErrorEstudiante>
+where
+    E: PgExecutor<'e>,
+{
+    let fila = sqlx::query_file_as!(Estudiante, "src/modules/students/queries/get_by_id.sql", id,)
+        .fetch_optional(conn)
+        .await?
+        .ok_or(ErrorEstudiante::EstudianteNoExiste)?;
+
+    Ok(fila)
+}
+
+/// El padrón de una sección, en el orden canónico del listado (RF-8, RF-9,
+/// RF-11 y RNF-3): `lower(apellido), lower(nombre)` con un `id` como
+/// desempate.
+///
+/// La sección debe existir — la sección inexistente responde `404` (RF-11 del
+/// listado)— pero puede estar inactiva: su padrón sigue siendo consultable
+/// (caso límite de la spec). `incluir_inactivas = false` devuelve solo los
+/// activos; `true`, también los inactivos con su estado.
+///
+/// Toma `&mut PgTransaction` y no un `PgExecutor` genérico por la misma razón
+/// que `crear`: hace dos llamadas (la verificación de la sección y el listado)
+/// y `sqlx` no permite reutilizar un executor genérico.
+pub async fn listar_por_seccion(
+    tx: &mut PgTransaction<'_>,
+    id_seccion: Uuid,
+    incluir_inactivas: bool,
+) -> Result<Vec<Estudiante>, ErrorEstudiante> {
+    match estado_seccion(&mut **tx, id_seccion).await? {
+        EstadoSeccion::NoExiste => return Err(ErrorEstudiante::SeccionNoExiste),
+        EstadoSeccion::Activa | EstadoSeccion::Inactiva => {}
+    }
+
+    let filas = sqlx::query_file_as!(
+        Estudiante,
+        "src/modules/students/queries/list_by_section.sql",
+        id_seccion,
+        incluir_inactivas,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    Ok(filas)
+}

@@ -28,6 +28,7 @@ limpia (todo lo que crean los tests se descarta con el `rollback`).
     Fase 2 adaptadas).
 
 - [x] **T3. `create.sql` + `crear`.** RF-1, RF-3, RF-4, RF-5, RF-21
+- [x] **T4. `get_by_id.sql` + `list_by_section.sql` + `consultar` + `listar_por_seccion`.** RF-8, RF-9, RF-10, RF-11, RNF-3, casos límite (sección inactiva consultable)
   - `ErrorEstudiante` en `queries.rs`, `verificar_seccion` (existe + activa)
     dentro de la misma tx, `create.sql` con `RETURNING`, auditoría "alta" en
     la misma transacción (RNF-2).
