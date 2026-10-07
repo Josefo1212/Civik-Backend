@@ -5,10 +5,10 @@
 //! Lo pertinente no es repetir los casos de negocio de `tests/students.rs`
 //! (transacción/rollback), sino comprobar que la superficie HTTP convierte
 //! cada situación en el código correcto y con la forma de JSON acordada
-//! (`snake_case`, `null` en cédula/teléfono). Estos tests **commitean**, así
-//! que cada uno crea lo suyo con nombres y cédulas de prefijo UUID único y
-//! borra al final con `DELETE` directo (RF-22 no expone borrado por la API —
-//! la higiene de la prueba no es un comportamiento de la API).
+//! (`snake_case`, `null` en teléfono ausente). Estos tests **commitean**, así
+//! que cada uno crea lo suyo con prefijos UUID únicos y borra al final con
+//! `DELETE` directo (RF-19 no expone borrado por la API — la higiene de la
+//! prueba no es un comportamiento de la API).
 
 mod common;
 
@@ -90,7 +90,6 @@ async fn alta_201_normaliza_y_devuelve_snake_case() -> Resultado {
                     json!({
                         "apellido": "  García   Rojas ",
                         "nombre": "Ana  María",
-                        "cedula": " V-777 ",
                         "telefono": "04121"
                     })
                     .to_string(),
@@ -103,9 +102,8 @@ async fn alta_201_normaliza_y_devuelve_snake_case() -> Resultado {
     let json: Value = serde_json::from_slice(&bytes)?;
 
     assert_eq!(json["id_section"], id_seccion.to_string());
-    assert_eq!(json["last_name"], "García Rojas", "RF-6: colapsado");
+    assert_eq!(json["last_name"], "García Rojas", "RF-5: colapsado");
     assert_eq!(json["first_name"], "Ana María");
-    assert_eq!(json["national_id"], "V-777", "RF-5/RF-6: recortada");
     assert_eq!(json["phone"], "04121");
     assert_eq!(json["active"], true);
     assert!(json["created_at"].is_string());
@@ -117,7 +115,7 @@ async fn alta_201_normaliza_y_devuelve_snake_case() -> Resultado {
 }
 
 #[tokio::test]
-async fn alta_sin_cedula_devuelve_null_en_national_id() -> Resultado {
+async fn alta_sin_telefono_devuelve_null_en_phone() -> Resultado {
     let pool = common::pool().await?;
     let app = build_router(pool.clone());
     let seccion = prefijo_unico();
@@ -142,63 +140,9 @@ async fn alta_sin_cedula_devuelve_null_en_national_id() -> Resultado {
     assert_eq!(respuesta.status(), StatusCode::CREATED);
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
-    assert_eq!(json["national_id"], Value::Null, "RF-7: ausente es null");
     assert_eq!(json["phone"], Value::Null);
 
     limpiar_estudiante(Uuid::parse_str(json["id"].as_str().unwrap())?).await?;
-    limpiar_seccion(id_seccion).await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn alta_duplicada_responde_409_con_mensaje_de_cedula() -> Resultado {
-    let pool = common::pool().await?;
-    let app = build_router(pool.clone());
-    let seccion = prefijo_unico();
-    crear_seccion(&app, &seccion).await?;
-    let id_seccion: Uuid = sqlx::query_scalar("SELECT id FROM sections WHERE section = $1")
-        .bind(&seccion)
-        .fetch_one(&pool)
-        .await?;
-    let cedula = format!("V-{seccion}");
-
-    let cuerpo =
-        || Body::from(json!({"apellido": "García", "nombre": "Ana", "cedula": cedula}).to_string());
-    let primera = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/sections/{id_seccion}/students"))
-                .header("content-type", "application/json")
-                .body(cuerpo())?,
-        )
-        .await?;
-    assert_eq!(primera.status(), StatusCode::CREATED);
-    let id = Uuid::parse_str(
-        serde_json::from_slice::<Value>(&to_bytes(primera.into_body(), usize::MAX).await?)?["id"]
-            .as_str()
-            .unwrap(),
-    )?;
-
-    let segunda = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/sections/{id_seccion}/students"))
-                .header("content-type", "application/json")
-                .body(cuerpo())?,
-        )
-        .await?;
-    assert_eq!(segunda.status(), StatusCode::CONFLICT, "RF-5");
-    let bytes = to_bytes(segunda.into_body(), usize::MAX).await?;
-    let json: Value = serde_json::from_slice(&bytes)?;
-    assert!(
-        json["error"].as_str().unwrap_or("").contains("cédula"),
-        "el mensaje explica el conflicto: {json}"
-    );
-
-    limpiar_estudiante(id).await?;
     limpiar_seccion(id_seccion).await?;
     Ok(())
 }
@@ -319,7 +263,7 @@ async fn listado_200_con_filtro_y_400_con_parametro_malo() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(sin_filtro.status(), StatusCode::OK, "RF-8");
+    assert_eq!(sin_filtro.status(), StatusCode::OK, "RF-6");
     let bytes = to_bytes(sin_filtro.into_body(), usize::MAX).await?;
     let lista: Value = serde_json::from_slice(&bytes)?;
     let tabla: Vec<Value> = lista
@@ -329,7 +273,7 @@ async fn listado_200_con_filtro_y_400_con_parametro_malo() -> Resultado {
         .filter(|fila| fila["id"] == id.to_string())
         .cloned()
         .collect();
-    assert!(tabla.is_empty(), "RF-8: el inactivo se omite");
+    assert!(tabla.is_empty(), "RF-6: el inactivo se omite");
 
     // Con la bandera lo devuelve marcado.
     let con_filtro = app
@@ -342,7 +286,7 @@ async fn listado_200_con_filtro_y_400_con_parametro_malo() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(con_filtro.status(), StatusCode::OK, "RF-9");
+    assert_eq!(con_filtro.status(), StatusCode::OK, "RF-7");
     let bytes = to_bytes(con_filtro.into_body(), usize::MAX).await?;
     let lista: Value = serde_json::from_slice(&bytes)?;
     let incluido = lista
@@ -351,7 +295,7 @@ async fn listado_200_con_filtro_y_400_con_parametro_malo() -> Resultado {
         .iter()
         .find(|fila| fila["id"] == id.to_string())
         .expect("la bandera debe incluirlo");
-    assert_eq!(incluido["active"], false, "RF-9: marcado como inactivo");
+    assert_eq!(incluido["active"], false, "RF-7: marcado como inactivo");
 
     // El parámetro mal escrito es un 400, no un 500.
     let malo = app
@@ -408,10 +352,10 @@ async fn consulta_200_y_404_para_inexistente() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(consulta.status(), StatusCode::OK, "RF-10");
+    assert_eq!(consulta.status(), StatusCode::OK, "RF-8");
     let bytes = to_bytes(consulta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
-    assert_eq!(json["id_section"], id_seccion.to_string(), "RF-10");
+    assert_eq!(json["id_section"], id_seccion.to_string(), "RF-8");
     assert_eq!(json["first_name"], "Ana");
 
     let inexistente = app
@@ -421,7 +365,7 @@ async fn consulta_200_y_404_para_inexistente() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(inexistente.status(), StatusCode::NOT_FOUND, "RF-11");
+    assert_eq!(inexistente.status(), StatusCode::NOT_FOUND, "RF-9");
 
     limpiar_estudiante(id).await?;
     limpiar_seccion(id_seccion).await?;
@@ -463,8 +407,8 @@ async fn edicion_200_cambia_datos_y_mueve_de_seccion() -> Resultado {
             .unwrap(),
     )?;
 
-    // La edición normaliza (RF-12), mueve a la sección activa (RF-15) y el
-    // primer término de RF-16 se cumple: sin asistencia, el cambio pasa.
+    // La edición normaliza (RF-10), mueve a la sección activa (RF-12) y el
+    // primer término de RF-13 se cumple: sin asistencia, el cambio pasa.
     let edicion = app
         .clone()
         .oneshot(
@@ -477,100 +421,22 @@ async fn edicion_200_cambia_datos_y_mueve_de_seccion() -> Resultado {
                         "id_seccion": destino,
                         "apellido": "  Rojas  ",
                         "nombre": "María",
-                        "cedula": "  ",
                         "telefono": "04121"
                     })
                     .to_string(),
                 ))?,
         )
         .await?;
-    assert_eq!(edicion.status(), StatusCode::OK, "RF-15");
+    assert_eq!(edicion.status(), StatusCode::OK, "RF-12");
     let bytes = to_bytes(edicion.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     assert_eq!(json["id_section"], destino.to_string());
     assert_eq!(json["last_name"], "Rojas");
-    assert_eq!(json["national_id"], Value::Null, "RF-7: cédula silenciada");
     assert_eq!(json["phone"], "04121");
 
     limpiar_estudiante(id).await?;
     limpiar_seccion(origen).await?;
     limpiar_seccion(destino).await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn edicion_a_cedula_ajena_responde_409() -> Resultado {
-    let pool = common::pool().await?;
-    let app = build_router(pool.clone());
-    let seccion = prefijo_unico();
-    crear_seccion(&app, &seccion).await?;
-    let id_seccion: Uuid = sqlx::query_scalar("SELECT id FROM sections WHERE section = $1")
-        .bind(&seccion)
-        .fetch_one(&pool)
-        .await?;
-    let cedula = format!("V-{seccion}");
-
-    let cuerpo = || Body::from(json!({"apellido": "García", "nombre": "Ana"}).to_string());
-    let con_cedula = || {
-        Body::from(json!({"apellido": "Pérez", "nombre": "María", "cedula": cedula}).to_string())
-    };
-
-    let primera = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/sections/{id_seccion}/students"))
-                .header("content-type", "application/json")
-                .body(con_cedula())?,
-        )
-        .await?;
-    assert_eq!(primera.status(), StatusCode::CREATED);
-    let id_dueña = Uuid::parse_str(
-        serde_json::from_slice::<Value>(&to_bytes(primera.into_body(), usize::MAX).await?)?["id"]
-            .as_str()
-            .unwrap(),
-    )?;
-
-    let segunda = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/sections/{id_seccion}/students"))
-                .header("content-type", "application/json")
-                .body(cuerpo())?,
-        )
-        .await?;
-    assert_eq!(segunda.status(), StatusCode::CREATED);
-    let id_sin_cedula = Uuid::parse_str(
-        serde_json::from_slice::<Value>(&to_bytes(segunda.into_body(), usize::MAX).await?)?["id"]
-            .as_str()
-            .unwrap(),
-    )?;
-
-    let edicion = app
-        .oneshot(
-            Request::builder()
-                .method("PUT")
-                .uri(format!("/students/{id_sin_cedula}"))
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "id_seccion": id_seccion,
-                        "apellido": "García",
-                        "nombre": "Ana",
-                        "cedula": cedula
-                    })
-                    .to_string(),
-                ))?,
-        )
-        .await?;
-    assert_eq!(edicion.status(), StatusCode::CONFLICT, "RF-14");
-
-    limpiar_estudiante(id_dueña).await?;
-    limpiar_estudiante(id_sin_cedula).await?;
-    limpiar_seccion(id_seccion).await?;
     Ok(())
 }
 
@@ -632,7 +498,7 @@ async fn edicion_a_seccion_inactiva_responde_409_y_editar_inexistente_404() -> R
     assert_eq!(
         mover.status(),
         StatusCode::CONFLICT,
-        "RF-15: sección inactiva"
+        "RF-12: sección inactiva"
     );
 
     let editar_inexistente = app
@@ -655,7 +521,7 @@ async fn edicion_a_seccion_inactiva_responde_409_y_editar_inexistente_404() -> R
     assert_eq!(
         editar_inexistente.status(),
         StatusCode::NOT_FOUND,
-        "RF-13 edición"
+        "RF-11 edición"
     );
 
     limpiar_estudiante(id).await?;
@@ -706,7 +572,7 @@ async fn baja_y_reactivacion_200_idempotentes_y_404_para_inexistente() -> Result
                     .body(Body::empty())?,
             )
             .await?;
-        assert_eq!(baja.status(), StatusCode::OK, "RF-17/RF-18");
+        assert_eq!(baja.status(), StatusCode::OK, "RF-14/RF-15");
         let bytes = to_bytes(baja.into_body(), usize::MAX).await?;
         let json: Value = serde_json::from_slice(&bytes)?;
         assert_eq!(json["active"], false);
@@ -722,7 +588,7 @@ async fn baja_y_reactivacion_200_idempotentes_y_404_para_inexistente() -> Result
                     .body(Body::empty())?,
             )
             .await?;
-        assert_eq!(reactivar.status(), StatusCode::OK, "RF-19/RF-20");
+        assert_eq!(reactivar.status(), StatusCode::OK, "RF-16/RF-17");
         let bytes = to_bytes(reactivar.into_body(), usize::MAX).await?;
         let json: Value = serde_json::from_slice(&bytes)?;
         assert_eq!(json["active"], true);
