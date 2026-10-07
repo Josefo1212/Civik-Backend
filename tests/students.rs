@@ -18,9 +18,9 @@ mod common;
 
 use civik_backend::modules::sections::domain::{DatosSeccion, Grado, Turno};
 use civik_backend::modules::sections::queries as secciones;
-use civik_backend::modules::students::domain::preparar_entrada;
+use civik_backend::modules::students::domain::{preparar_entrada, DatosEstudiante};
 use civik_backend::modules::students::queries::{
-    consultar, crear, listar_por_seccion, ErrorEstudiante,
+    consultar, crear, editar, listar_por_seccion, ErrorEstudiante,
 };
 use civik_backend::shared::error::AppError;
 use uuid::Uuid;
@@ -447,6 +447,320 @@ async fn dos_estudiantes_sin_cedula_conviven() -> Resultado {
     .await?;
 
     assert_eq!(sin_cedula, 2);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_editar_normaliza_igual_que_el_alta() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e12").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    // RF-12: el mismo `preparar_entrada` del alta; `"  ... "` se colapsa.
+    let datos = preparar_entrada(
+        seccion.id,
+        " Rojas   Martínez ",
+        "María  Luisa ",
+        None,
+        None,
+    )?;
+    let editado = editar(&mut tx, estudiante.id, datos).await?;
+
+    assert_eq!(
+        editado.last_name, "Rojas Martínez",
+        "RF-12: apellido colapsado"
+    );
+    assert_eq!(editado.first_name, "María Luisa", "RF-12: nombre colapsado");
+    assert_eq!(editado.id_section, seccion.id);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_editar_puede_silenciar_la_cedula() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e13").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", Some("V-500")).await,
+    )
+    .await?;
+
+    // Caso límite revisado con la spec: la cédula nunca se libera para
+    // reasignarla, pero el instructor puede QUITÁRSELA a su dueño (RF-7
+    // se aplica también en la edición: `""` → NULL).
+    let sin_cedula = preparar_entrada(seccion.id, "García", "Ana", Some("   "), None)?;
+    let editado = editar(&mut tx, estudiante.id, sin_cedula).await?;
+
+    assert_eq!(editado.national_id, None);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_editar_a_una_cedula_ajena_se_rechaza() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e14").await;
+    crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "López", "María", Some("V-600")).await,
+    )
+    .await?;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    let resultado = editar(
+        &mut tx,
+        estudiante.id,
+        datos_de_prueba(seccion.id, "García", "Ana", Some("V-600")).await,
+    )
+    .await;
+
+    let Err(ErrorEstudiante::Sqlx(error)) = resultado else {
+        panic!("asignar una cédula en uso debe fallar (RF-14), llegó: {resultado:?}");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23505"));
+        assert_eq!(base.constraint(), Some("uq_students_national_id"));
+    } else {
+        panic!("esperaba un error de base de datos, llegó: {error}");
+    }
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_editar_mueve_a_otra_seccion_activa_y_la_valida() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let origen = crear_seccion(&mut tx, "e15").await;
+    let destino = crear_seccion(&mut tx, "e16").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(origen.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    // RF-15: mover a una sección existente y activa funciona, y el padrón del
+    // origen queda sin el estudiante (el mismo lista en el destino).
+    let movido = editar(
+        &mut tx,
+        estudiante.id,
+        datos_de_prueba(destino.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    assert_eq!(
+        movido.id_section, destino.id,
+        "RF-15: el cambio de sección aplica"
+    );
+
+    // RF-16 (primer término): sin asistencia registrada, el cambio se permite.
+    let en_origen = listar_por_seccion(&mut tx, origen.id, false).await?;
+    assert!(en_origen.is_empty(), "el origen queda sin el estudiante");
+    assert_eq!(
+        listar_por_seccion(&mut tx, destino.id, false).await?.len(),
+        1
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_editar_a_seccion_inexistente_informa_que_no_existe() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e17").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    let resultado = editar(
+        &mut tx,
+        estudiante.id,
+        datos_de_prueba(Uuid::new_v4(), "García", "Ana", None).await,
+    )
+    .await;
+
+    assert!(
+        matches!(resultado, Err(ErrorEstudiante::SeccionNoExiste)),
+        "mover a una sección inexistente → SeccionNoExiste (RF-15), llegó: {resultado:?}"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_editar_a_seccion_inactiva_informa_que_esta_dada_de_baja() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let origen = crear_seccion(&mut tx, "e18").await;
+    let destino = crear_seccion(&mut tx, "e19").await;
+    secciones::set_active(&mut tx, destino.id, false).await?;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(origen.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    let resultado = editar(
+        &mut tx,
+        estudiante.id,
+        datos_de_prueba(destino.id, "García", "Ana", None).await,
+    )
+    .await;
+
+    assert!(
+        matches!(resultado, Err(ErrorEstudiante::SeccionInactiva)),
+        "mover a una sección inactiva → SeccionInactiva (RF-15), llegó: {resultado:?}"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_editar_sin_cambiar_de_seccion_no_vuelve_a_validarla() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e20").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+    secciones::set_active(&mut tx, seccion.id, false).await?;
+
+    // Literal de RF-15: "CUANDO la edición CAMBIA la sección". Corregir el
+    // teléfono de un estudiante de una sección ya dada de baja no es cambiar
+    // de sección: no hay que volver a exigir que la sección esté activa.
+    let corregir = preparar_entrada(seccion.id, "García", "Ana", None, Some("04121"))?;
+    let editado = editar(&mut tx, estudiante.id, corregir).await?;
+
+    assert_eq!(editado.phone.as_deref(), Some("04121"));
+    assert!(
+        editado.active,
+        "la edición no toca el estado del estudiante"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_editar_de_un_estudiante_inexistente_informa_que_no_se_encontro() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e21").await;
+    let resultado = editar(
+        &mut tx,
+        Uuid::new_v4(),
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await;
+
+    assert!(
+        matches!(resultado, Err(ErrorEstudiante::EstudianteNoExiste)),
+        "editar un id inexistente → EstudianteNoExiste, llegó: {resultado:?}"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn el_editar_deja_su_entrada_de_auditoria() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e22").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    let datos = preparar_entrada(seccion.id, "Rojas", "Carlos", None, None)?;
+    editar(&mut tx, estudiante.id, datos).await?;
+
+    let (action, data): (String, serde_json::Value) = sqlx::query_as(
+        "SELECT action, data FROM audit_logs \
+         WHERE entity = 'students' AND entity_id = $1 AND action = 'editar'",
+    )
+    .bind(estudiante.id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    assert_eq!(action, "editar", "RF-21: la edición se registra en español");
+    assert!(
+        data["apellido"] == "Rojas",
+        "la auditoría guarda el valor nuevo: {data}"
+    );
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn los_nombres_en_blanco_se_rechazan_aunque_se_salte_el_dominio() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "e23").await;
+    let estudiante = crear(
+        &mut tx,
+        datos_de_prueba(seccion.id, "García", "Ana", None).await,
+    )
+    .await?;
+
+    // Bypass deliberado de `preparar_entrada`: un bug futuro del dominio no
+    // debe poder guardar un apellido en blanco, porque la base también tiene
+    // el CHECK `students_names_not_blank` (RF-13 en profundidad).
+    let invalido = DatosEstudiante {
+        id_seccion: seccion.id,
+        apellido: "   ".to_string(),
+        nombre: "Ana".to_string(),
+        cedula: None,
+        telefono: None,
+    };
+    let resultado = editar(&mut tx, estudiante.id, invalido).await;
+
+    let Err(ErrorEstudiante::Sqlx(error)) = resultado else {
+        panic!("un nombre en blanco debe fallar en la base (RF-13), llegó: {resultado:?}");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23514"));
+        assert_eq!(base.constraint(), Some("students_names_not_blank"));
+    } else {
+        panic!("esperaba un error de base de datos, llegó: {error}");
+    }
 
     tx.rollback().await?;
     Ok(())

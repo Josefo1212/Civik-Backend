@@ -193,3 +193,58 @@ pub async fn listar_por_seccion(
 
     Ok(filas)
 }
+
+/// Edita un estudiante ya normalizado y deja su "editar" en el historial
+/// (RF-12, RF-21). Se usa el mismo `preparar_entrada` del alta, así la
+/// normalización y la validación de obligatorios son idénticas (RF-12, RF-13).
+///
+/// La sección se valida **solo cuando la edición la cambia** (RF-15, literal:
+/// "CUANDO la edición cambia la sección"). Eso hace que corregir el teléfono
+/// de un estudiante de una sección ya dada de baja no exija nada nuevo: el
+/// estudiante ya está donde está. Si cambia, la nueva sección debe existir
+/// (`SeccionNoExiste`) y estar activa (`SeccionInactiva`).
+///
+/// Un identificador inexistente responde `EstudianteNoExiste` (el 404 de la
+/// edición) y una cédula ajena sube como `23505` y se traduce a `Conflict`
+/// (RF-14). Leer primero el estado actual no es ceremonia: decide si la
+/// validación de sección aplica.
+pub async fn editar(
+    tx: &mut PgTransaction<'_>,
+    id: Uuid,
+    datos: DatosEstudiante,
+) -> Result<Estudiante, ErrorEstudiante> {
+    let actual = consultar(&mut **tx, id).await?;
+
+    if actual.id_section != datos.id_seccion {
+        match estado_seccion(&mut **tx, datos.id_seccion).await? {
+            EstadoSeccion::NoExiste => return Err(ErrorEstudiante::SeccionNoExiste),
+            EstadoSeccion::Inactiva => return Err(ErrorEstudiante::SeccionInactiva),
+            EstadoSeccion::Activa => {}
+        }
+    }
+
+    let fila = sqlx::query_file_as!(
+        Estudiante,
+        "src/modules/students/queries/update.sql",
+        id,
+        datos.id_seccion,
+        &datos.nombre,
+        &datos.apellido,
+        datos.cedula.as_deref(),
+        datos.telefono.as_deref(),
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(ErrorEstudiante::EstudianteNoExiste)?;
+
+    let payload = json!({
+        "id_seccion": datos.id_seccion,
+        "apellido": datos.apellido,
+        "nombre": datos.nombre,
+        "cedula": datos.cedula,
+        "telefono": datos.telefono,
+    });
+    audit::write_audit_log_tx(tx, "students", fila.id, "editar", Some(&payload)).await?;
+
+    Ok(fila)
+}
