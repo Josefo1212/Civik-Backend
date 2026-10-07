@@ -1,3 +1,9 @@
+// La excepción explícita al `deny` de `lib.rs`: este archivo es el arranque,
+// el único lugar (junto con `config/database.rs`) donde la política es fallar
+// rápido con panic en vez de propagar un `Result` — la app no tiene sentido a
+// medio levantar.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use civik_backend::{app, config};
 use std::net::SocketAddr;
 

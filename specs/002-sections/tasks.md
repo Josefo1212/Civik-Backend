@@ -123,7 +123,7 @@ exista en la base, ningún `.sql` que la mencione compila.
     `grade_level`, `section`, `shift`, `active`, `created_at`, `updated_at` en
     `snake_case`, con el grado en minúscula y el turno en mayúscula.
 
-- [ ] **T9. `#![deny(unwrap_used, expect_used)]` y `clippy` limpio.**
+- [x] **T9. `#![deny(unwrap_used, expect_used)]` y `clippy` limpio.**
   Todos
   - El `allow` explícito va solo en `main.rs` y `config/database.rs`, que
     son los dos únicos lugares donde la constitución nº 5 permite fallar

@@ -9,12 +9,6 @@
 //! pasan por la misma función (RF-14 lo exige literalmente), y por eso no
 //! pueden divergir.
 
-// Temporal: el módulo se construye antes de que exista su consumidor (T4 lo
-// llama desde `queries.rs`/`handler.rs`), así que todo lo de acá está muerto
-// hasta entonces. Se quita en T9, que es donde el crate queda con
-// `deny(clippy::unwrap_used)` y sin advertencias.
-#![allow(dead_code)]
-
 use thiserror::Error;
 
 /// Máximo de `sections.grade_level` (`varchar(30)`).

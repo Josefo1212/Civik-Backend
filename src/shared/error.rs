@@ -84,7 +84,10 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
+// Los tests de unidad pueden usar `unwrap()`: el `deny` de `lib.rs` protege
+// el código de producción, y en un assert un panic es el fallo esperado.
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
