@@ -46,8 +46,9 @@ impl IntoResponse for AppError {
 /// Traduce un código de error de Postgres **junto con su restricción** a un
 /// `409 Conflict`.
 ///
-/// El código solo no alcanza: la init tiene seis restricciones UNIQUE y seis
-/// clave foránea, y el mismo `23505` significa "combinación duplicada" sobre
+/// El código solo no alcanza: la init tiene cinco restricciones UNIQUE (tras
+/// retirar `uq_students_national_id`) y varias clave foránea, y el mismo
+/// `23505` significa "combinación duplicada" sobre
 /// `uq_sections_grade_section_shift` pero "id repetido" sobre `sections_pkey`.
 /// Mapear solo el código devolvería un 409 con un mensaje falso.
 ///
@@ -71,9 +72,6 @@ pub(crate) fn mapear_violacion(
     match (codigo, restriccion) {
         (Some("23505"), Some("uq_sections_grade_section_shift")) => Some(AppError::Conflict(
             "Esa combinación de grado, subdivisión y turno ya está en uso".to_string(),
-        )),
-        (Some("23505"), Some("uq_students_national_id")) => Some(AppError::Conflict(
-            "Ya existe un estudiante con esa cédula".to_string(),
         )),
         (Some("23001") | Some("23503"), Some("students_id_section_fkey")) => Some(
             AppError::Conflict("La sección tiene estudiantes".to_string()),
@@ -105,7 +103,7 @@ mod tests {
 
     // --- El código de Postgres sin su restricción no basta ---
     //
-    // La init tiene seis UNIQUE y seis FK: el mismo `23505` significa
+    // La init tiene cinco UNIQUE y varias FK: el mismo `23505` significa
     // "combinación duplicada" sobre `uq_sections_grade_section_shift` y
     // "id repetido" sobre `sections_pkey`. Cruzar solo el código devolvería
     // 409 con un mensaje falso.
@@ -124,17 +122,6 @@ mod tests {
     fn duplicado_de_llave_primaria_no_es_conflict() {
         assert!(mapear_violacion(Some("23505"), Some("sections_pkey")).is_none());
         assert!(mapear_violacion(Some("23505"), Some("uq_events_auto_one_per_day")).is_none());
-    }
-
-    #[test]
-    fn cedula_duplicada_es_conflict() {
-        // RF-5 de la spec 003: la cédula es única, también contra un
-        // estudiante inactivo — la restricción no distingue estados.
-        let error = mapear_violacion(Some("23505"), Some("uq_students_national_id")).unwrap();
-
-        assert!(matches!(error, AppError::Conflict(_)));
-        let mensaje = error.to_string();
-        assert!(mensaje.contains("cédula"), "mensaje: {mensaje}");
     }
 
     #[test]

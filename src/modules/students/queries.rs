@@ -18,14 +18,13 @@ use uuid::Uuid;
 /// Una fila de `students`, en la forma exacta que devuelven las queries.
 ///
 /// Los nombres de los campos son los de la base y del JSON (constitución
-/// nº 7), no los del dominio (`domain::DatosEstudiante`): `national_id` y
-/// `phone` son `Option` porque la columna es nullable y los nombres pueden no
-/// estar informados.
+/// nº 7), no los del dominio (`domain::DatosEstudiante`): `phone` es
+/// `Option` porque la columna es nullable y el teléfono puede no estar
+/// informado.
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Estudiante {
     pub id: Uuid,
     pub id_section: Uuid,
-    pub national_id: Option<String>,
     pub first_name: String,
     pub last_name: String,
     pub phone: Option<String>,
@@ -57,8 +56,7 @@ pub enum ErrorEstudiante {
     /// La sección a la que se intenta vincular está dada de baja (`409`).
     #[error("La sección está inactiva: no admite estudiantes")]
     SeccionInactiva,
-    /// Cualquier fallo de `sqlx` — incluido el `23505` de la cédula, que se
-    /// traduce al 409 en `From<ErrorEstudiante> for AppError`.
+    /// Cualquier fallo de `sqlx`.
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
 }
@@ -75,9 +73,6 @@ impl From<ErrorEstudiante> for AppError {
             ErrorEstudiante::SeccionInactiva => {
                 AppError::Conflict("La sección está inactiva: no admite estudiantes".into())
             }
-            // El `23505` de `uq_students_national_id` viaja hasta acá y
-            // `From<sqlx::Error>` lo convierte en `Conflict` con el mensaje
-            // correcto (error.rs); el resto queda como 500.
             ErrorEstudiante::Sqlx(inner) => inner.into(),
         }
     }
@@ -101,14 +96,12 @@ where
 }
 
 /// Da de alta un estudiante ya normalizado y deja su entrada de auditoría en
-/// la misma transacción (RF-21, RNF-2).
+/// la misma transacción (RF-18, RNF-2).
 ///
 /// Antes de insertar, verifica la sección dentro de la misma transacción:
 /// inexistente → `SeccionNoExiste` (RF-3), inactiva → `SeccionInactiva`
-/// (RF-4). El `23505` de la cédula sube envuelto en `ErrorEstudiante::Sqlx` y
-/// `From<ErrorEstudiante> for AppError` lo traduce a `409` (RF-5); la
-/// restricción manda, no hay `SELECT` previo de "¿ya existe la cédula?"
-/// (plan §8.2).
+/// (RF-4). No hay cédula que validar: `students` no tiene constraints UNIQUE
+/// tras la migración `remove_students_national_id`.
 pub async fn crear(
     tx: &mut PgTransaction<'_>,
     datos: DatosEstudiante,
@@ -125,7 +118,6 @@ pub async fn crear(
         datos.id_seccion,
         &datos.nombre,
         &datos.apellido,
-        datos.cedula.as_deref(),
         datos.telefono.as_deref(),
     )
     .fetch_one(&mut **tx)
@@ -135,7 +127,6 @@ pub async fn crear(
         "id_seccion": datos.id_seccion,
         "apellido": datos.apellido,
         "nombre": datos.nombre,
-        "cedula": datos.cedula,
         "telefono": datos.telefono,
     });
     audit::write_audit_log_tx(tx, "students", fila.id, "alta", Some(&payload)).await?;
@@ -143,8 +134,8 @@ pub async fn crear(
     Ok(fila)
 }
 
-/// Un estudiante por su identificador, activo o inactivo (RF-10); si no
-/// existe, `EstudianteNoExiste` (RF-11).
+/// Un estudiante por su identificador, activo o inactivo (RF-8); si no
+/// existe, `EstudianteNoExiste` (RF-9).
 ///
 /// Acepta un `PgExecutor` genérico porque hace una sola consulta y no lo
 /// reusa para una segunda llamada (mismo criterio que `sections::get_by_id`).
@@ -160,11 +151,11 @@ where
     Ok(fila)
 }
 
-/// El padrón de una sección, en el orden canónico del listado (RF-8, RF-9,
-/// RF-11 y RNF-3): `lower(apellido), lower(nombre)` con un `id` como
+/// El padrón de una sección, en el orden canónico del listado (RF-6, RF-7,
+/// RF-9 y RNF-3): `lower(apellido), lower(nombre)` con un `id` como
 /// desempate.
 ///
-/// La sección debe existir — la sección inexistente responde `404` (RF-11 del
+/// La sección debe existir — la sección inexistente responde `404` (RF-9 del
 /// listado)— pero puede estar inactiva: su padrón sigue siendo consultable
 /// (caso límite de la spec). `incluir_inactivas = false` devuelve solo los
 /// activos; `true`, también los inactivos con su estado.
@@ -195,18 +186,17 @@ pub async fn listar_por_seccion(
 }
 
 /// Edita un estudiante ya normalizado y deja su "editar" en el historial
-/// (RF-12, RF-21). Se usa el mismo `preparar_entrada` del alta, así la
-/// normalización y la validación de obligatorios son idénticas (RF-12, RF-13).
+/// (RF-10, RF-18). Se usa el mismo `preparar_entrada` del alta, así la
+/// normalización y la validación de obligatorios son idénticas (RF-10, RF-11).
 ///
-/// La sección se valida **solo cuando la edición la cambia** (RF-15, literal:
+/// La sección se valida **solo cuando la edición la cambia** (RF-12, literal:
 /// "CUANDO la edición cambia la sección"). Eso hace que corregir el teléfono
 /// de un estudiante de una sección ya dada de baja no exija nada nuevo: el
 /// estudiante ya está donde está. Si cambia, la nueva sección debe existir
 /// (`SeccionNoExiste`) y estar activa (`SeccionInactiva`).
 ///
 /// Un identificador inexistente responde `EstudianteNoExiste` (el 404 de la
-/// edición) y una cédula ajena sube como `23505` y se traduce a `Conflict`
-/// (RF-14). Leer primero el estado actual no es ceremonia: decide si la
+/// edición). Leer primero el estado actual no es ceremonia: decide si la
 /// validación de sección aplica.
 pub async fn editar(
     tx: &mut PgTransaction<'_>,
@@ -230,7 +220,6 @@ pub async fn editar(
         datos.id_seccion,
         &datos.nombre,
         &datos.apellido,
-        datos.cedula.as_deref(),
         datos.telefono.as_deref(),
     )
     .fetch_optional(&mut **tx)
@@ -241,7 +230,6 @@ pub async fn editar(
         "id_seccion": datos.id_seccion,
         "apellido": datos.apellido,
         "nombre": datos.nombre,
-        "cedula": datos.cedula,
         "telefono": datos.telefono,
     });
     audit::write_audit_log_tx(tx, "students", fila.id, "editar", Some(&payload)).await?;
@@ -249,15 +237,15 @@ pub async fn editar(
     Ok(fila)
 }
 
-/// Marca a un estudiante activo o inactivo según `activo` (RF-17, RF-19),
-/// de forma idempotente (RF-18, RF-20).
+/// Marca a un estudiante activo o inactivo según `activo` (RF-14, RF-16),
+/// de forma idempotente (RF-15, RF-17).
 ///
 /// `set_active.sql` solo actualiza si el estado cambia (`IS DISTINCT FROM`);
 /// cuando no devuelve filas hay dos posibilidades que la base no separa:
 /// si el estudiante no existe, responde `EstudianteNoExiste`; si existe, ya
 /// estaba en el estado pedido y se devuelve tal cual (sin mover `updated_at`).
 ///
-/// La auditoría (RF-21) se escribe únicamente cuando el estado cambió de
+/// La auditoría (RF-18) se escribe únicamente cuando el estado cambió de
 /// verdad: repetir la llamada "no modifica nada" y no debe dejar una entrada
 /// falsa en el historial.
 pub async fn set_active(

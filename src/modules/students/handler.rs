@@ -25,19 +25,17 @@ use uuid::Uuid;
 pub struct EntradaAlta {
     apellido: String,
     nombre: String,
-    cedula: Option<String>,
     telefono: Option<String>,
 }
 
 /// El cuerpo de la edición. Acá **sí** entra `id_seccion`: la ruta
 /// (`PUT /students/{id}`) no la contiene y el cambio de sección es parte de
-/// la edición (RF-15).
+/// la edición (RF-12).
 #[derive(Deserialize)]
 pub struct EntradaEdicion {
     id_seccion: Uuid,
     apellido: String,
     nombre: String,
-    cedula: Option<String>,
     telefono: Option<String>,
 }
 
@@ -63,7 +61,6 @@ pub async fn crear(
         id_seccion,
         &entrada.apellido,
         &entrada.nombre,
-        entrada.cedula.as_deref(),
         entrada.telefono.as_deref(),
     )
     .map_err(entrada_a_bad_request)?;
@@ -76,7 +73,7 @@ pub async fn crear(
 }
 
 /// `GET /sections/{id}/students?incluir_inactivas=true` — padrón de la
-/// sección (RF-8, RF-9).
+/// sección (RF-6, RF-7).
 ///
 /// El parámetro se lee como `String` y se valida a mano (plan 003 §7): el
 /// `Option<bool>` de serde podría responder 400 también, pero el rechazo de
@@ -104,8 +101,8 @@ pub async fn listar(
     Ok(Json(estudiantes))
 }
 
-/// `GET /students/{id}` — consulta por identificador (RF-10); `404` si no
-/// existe (RF-11).
+/// `GET /students/{id}` — consulta por identificador (RF-8); `404` si no
+/// existe (RF-9).
 pub async fn consultar(
     State(pool): State<PgPool>,
     Path(id): Path<Uuid>,
@@ -114,7 +111,7 @@ pub async fn consultar(
     Ok(Json(estudiante))
 }
 
-/// `PUT /students/{id}` — edición (RF-12 a RF-16): mismo cuerpo y misma
+/// `PUT /students/{id}` — edición (RF-10 a RF-13): mismo cuerpo y misma
 /// validación que el alta, más la sección porque el cambio de sección es
 /// parte de la edición.
 pub async fn editar(
@@ -126,7 +123,6 @@ pub async fn editar(
         entrada.id_seccion,
         &entrada.apellido,
         &entrada.nombre,
-        entrada.cedula.as_deref(),
         entrada.telefono.as_deref(),
     )
     .map_err(entrada_a_bad_request)?;
@@ -138,7 +134,7 @@ pub async fn editar(
     Ok(Json(estudiante))
 }
 
-/// `POST /students/{id}/baja` — baja lógica (RF-17, RF-18).
+/// `POST /students/{id}/baja` — baja lógica (RF-14, RF-15).
 pub async fn baja(
     State(pool): State<PgPool>,
     Path(id): Path<Uuid>,
@@ -146,7 +142,7 @@ pub async fn baja(
     cambiar_estado(pool, id, false).await
 }
 
-/// `POST /students/{id}/reactivar` — reactivación (RF-19, RF-20).
+/// `POST /students/{id}/reactivar` — reactivación (RF-16, RF-17).
 pub async fn reactivar(
     State(pool): State<PgPool>,
     Path(id): Path<Uuid>,
