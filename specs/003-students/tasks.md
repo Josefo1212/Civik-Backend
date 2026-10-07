@@ -31,61 +31,61 @@ limpia (todo lo que crean los tests se descarta con el `rollback`).
 - [x] **T4. `get_by_id.sql` + `list_by_section.sql` + `consultar` + `listar_por_seccion`.** RF-8, RF-9, RF-10, RF-11, RNF-3, casos límite (sección inactiva consultable)
 - [x] **T5. `update.sql` + `editar`.** RF-12, RF-13, RF-14, RF-15, RF-16
 - [x] **T6. `set_active.sql` + `baja`/`reactivar` idempotentes.** RF-17, RF-18, RF-19, RF-20, RF-21
-- [x] **T7. `handler.rs` + rutas en `app.rs` + tests HTTP.** Bordes `oneshot`: códigos 201/200/400/404/409, `snake_case`, `null` en cédula/teléfono
-  - `ErrorEstudiante` en `queries.rs`, `verificar_seccion` (existe + activa)
-    dentro de la misma tx, `create.sql` con `RETURNING`, auditoría "alta" en
-    la misma transacción (RNF-2).
-  - Tests integración (patrón transacción/rollback): el alta persiste y
-    audita; sección inexistente → `SeccionNoExiste`; sección inactiva →
-    `SeccionInactiva`; cédula duplicada → `Conflict` (también contra un
-    estudiante inactivo; la cédula no se libera); cédula vacía → `null` y
-    dos estudiantes sin cédula conviven.
-  - `tests/conflictos_bd.rs`: INSERT duplicado directo → la restricción es
-    `students_national_id_key` y se traduce a `Conflict`.
-  - Hecho cuando: suite en verde y clippy limpio.
+- [x] **T7. `handler.rs` + rutas en `app.rs` + tests `oneshot`.** Bordes 201/200/400/404/409 en los seis endpoints, forma `snake_case`, `null` en cédula/teléfono
 
-- [ ] **T4. `get_by_id.sql` + `list_by_section.sql`.** RF-8, RF-9, RF-10,
-  RF-11
-  - `consultar` y `listar_por_seccion(id_seccion, incluir_inactivas)`; la
-    lista valida solo existencia de la sección (sección inactiva se lista,
-    inexistente → `SeccionNoExiste`).
-  - Tests: consulta de activo e inactivo; id inexistente; listado por
-    defecto solo activos en orden `lower(apellido), lower(nombre)` (y
-    estable); `incluir_inactivas=true` incluye y marca; listado de una
-    sección inactiva; listado de sección inexistente.
-  - Hecho cuando: suite en verde y clippy limpio.
-
-- [ ] **T5. `update.sql` + `editar`.** RF-12, RF-13, RF-14, RF-15, RF-16
-  - Edición con la misma `preparar_entrada` del alta; mueve de sección solo
-    si existe y está activa (segundo término de RF-16: el trigger, Fase 7);
-    auditoría "editar" en la misma tx.
-  - Tests: normaliza igual que el alta; vacíos rechazados; cédula ajena →
-    `Conflict`; mover a sección inexistente/inactiva → 404/409; mover a
-    sección activa funciona; editar sin cambiar de sección funciona.
-  - Hecho cuando: suite en verde y clippy limpio.
-
-- [ ] **T6. `set_active.sql` + baja/reactivación.** RF-17, RF-18, RF-19,
-  RF-20, RF-21
-  - Idempotencia real (`IS DISTINCT FROM`), auditoría solo si el estado
-    cambió de verdad.
-  - Tests: baja marca inactivo y lo omite del listado por defecto; bajar dos
-    veces no modifica `updated_at` ni audita de más; reactivar lo devuelve
-    al listado; reactivar dos veces no modifica nada; estudiante inexistente
-    → `EstudianteNoExiste`.
-  - Hecho cuando: suite en verde y clippy limpio.
-
-- [ ] **T7. `handler.rs` + rutas en `app.rs` + tests `oneshot`.**
-  - `crear`, `listar` (parámetro `incluir_inactivas` validado), `consultar`,
-    `editar`, `baja`, `reactivar`; rutas según plan §7; sin ruta de DELETE
-    (RF-22).
-  - `tests/http_students.rs` (commitean; prefijos UUID únicos + limpieza con
-    `DELETE` SQL directo): 201/200/400/404/409 en los seis endpoints, forma
-    `snake_case` del JSON, `null` en `national_id`/`phone` cuando no hay.
-  - Hecho cuando: suite completa en verde, clippy **0/0**, base `civik_dev`
-    sin filas remanentes.
-
-- [ ] **T8. Validación RF por RF, llamada real y cierre de la fase.** RF-16
+- [x] **T8. Validación RF por RF, llamada real y cierre de la fase.** RF-16
   (marcar parcial), RF-22 (verificación por no-existencia)
+  - Tabla RF → test → veredicto en este archivo; bordes confirmados con
+    `cargo run` + `curl` sobre los seis endpoints; spec 003 con `Estado:
+    implementada`; `MEMORY.md` al día (Fase 3 cerrada, próxima Fase 4).
+
+## Validación RF por RF (cierre de la fase)
+
+Cada veredicto sale de una prueba que lo demuestra; el `curl` solo confirmó
+los códigos de la superficie HTTP con el servidor real (todos: 201/200/400/
+404/409/405 para el `DELETE` inexistente).
+
+| RF | Qué la prueba demuestra | Veredicto |
+|---|---|---|
+| RF-1 | El alta persiste la fila, devuelve el id y audita | Cumple (`el_alta_persiste_la_fila_y_devuelve_identificador`) |
+| RF-2 | Nombres vacíos o de solo espacios se rechazan antes de la base | Cumple (`apellido_solo_con_espacios_se_rechaza` + HTTP 400) |
+| RF-3 | Alta en sección inexistente se informa | Cumple (`el_alta_en_seccion_inexistente_informa_que_no_existe` + 404) |
+| RF-4 | Alta en sección inactiva se informa | Cumple (`el_alta_en_seccion_inactiva_...` + 409) |
+| RF-5 | Cédula duplicada se rechaza, también contra un inactivo; nunca se libera | Cumple (`el_alta_de_un_estudiante_con_cedula_duplicada_falla`, `la_cedula_de_un_estudiante_inactivo_no_se_libera`, `cedula_duplicada_real_se_convierte_en_409`) |
+| RF-6 | Recorte de extremos y espacios repetidos, capitalización intacta | Cumple (`el_alta_persiste_la_fila...` y `el_editar_normaliza_igual_que_el_alta`) |
+| RF-7 | Cédula ausente/vacía → `null`; dos sin cédula conviven; se silencia en la edición | Cumple (`dos_estudiantes_sin_cedula_conviven`, `el_editar_puede_silenciar_la_cedula`) |
+| RF-8 | Listado por defecto: solo activos, orden `lower(apellido), lower(nombre)` | Cumple (`el_listado_por_defecto_devuelve_solo_activos_en_orden`) |
+| RF-9 | `incluir_inactivas=true`: devuelve inactivos con su estado | Cumple (`incluir_inactivas_devuelve_tambien_las_inactivas_marcadas`) |
+| RF-10 | Consulta por id devuelve sección y estado | Cumple (`consultar_devuelve_el_estudiante_incluido_su_estado`) |
+| RF-11 | Id inexistente responde que no se encontró | Cumple (`consultar_un_identificador_inexistente_...` + 404) |
+| RF-12 | La edición normaliza y valida igual que el alta | Cumple (`el_editar_normaliza_igual_que_el_alta`, mismo `preparar_entrada`) |
+| RF-13 | Editar a vacío se rechaza (punto único + CHECK de la base) | Cumple (`apellido_vacio_se_rechaza` y `los_nombres_en_blanco_se_rechazan_aunque_se_salte_el_dominio`, 23514) |
+| RF-14 | Editar a una cédula ajena se rechaza | Cumple (`el_editar_a_una_cedula_ajena_se_rechaza` + 409 con `curl`) |
+| RF-15 | Mover a sección inexistente/inactiva se rechaza; a activa funciona; sin cambio no se valida otra vez | Cumple (los tres casos en `tests/students.rs` + 409/404 en `curl`) |
+| RF-16 | Primer término (mover sin asistencia) | Cumple (`el_editar_mueve_a_otra_seccion_activa_y_la_valida`) |
+| RF-16 | Segundo término (regla 3 con asistencia) | **Parcial**: garantizado por `trg_students_section_immutable` de la init; se ejercita recién en la Fase 7 (tasks.md, notas) |
+| RF-17 | La baja marca inactivo y lo omite del listado por defecto | Cumple (`la_baja_marca_inactivo_y_lo_omite_del_listado_por_defecto`) |
+| RF-18 | Bajar dos veces: `200` y `updated_at` no cambia | Cumple (`bajar_dos_veces_no_modifica_nada_y_es_exitoso`) |
+| RF-19 | La reactivación deja `active = true` y vuelve al listado | Cumple (`la_reactivacion_vuelve_el_estudiante_al_listado`) |
+| RF-20 | Reactivar dos veces: `200` sin cambios | Cumple (`reactivar_dos_veces_no_modifica_nada`) |
+| RF-21 | Cada operación escribe su auditoría; la idempotente no deja falsa | Cumple (`el_alta_deja_su_entrada_en_el_historial`, `el_editar_deja_su_entrada_de_auditoria`, `la_baja_idempotente_no_deja_auditoria_falsa`, `la_reactivacion_deja_su_entrada_de_auditoria`) |
+| RF-22 | No existe ruta de borrado | Cumple por ausencia: no hay `delete.sql`, no hay ruta `DELETE`, y `curl -X DELETE /students/{id}` respondió `405` |
+| RNF-3 | El orden del listado es estable entre llamadas | Cumple (`el_orden_del_listado_es_estable_entre_llamadas`) |
+
+**Cierre con `curl` contra `127.0.0.1:3000`** (todo respondió con éxito de
+operación o el error esperado): alta 201 (normalización y `snake_case`
+verificadas en el cuerpo), alta sin cédula con `national_id: null`, apellido
+en blanco → 400, sección inexistente → 404, sección inactiva → 409, cédula
+duplicada → 409 con mensaje, listado con y sin `incluir_inactivas` (orden y
+marcado verificados), parámetro malo → 400, consulta 200, consulta
+inexistente 404, `DELETE` → 405, edición 200 (mueve y silencia cédula),
+edición a sección inexistente 404, a inactiva 409, a cédula ajena 409, a
+inexistente 404, nombre en blanco 400, baja/reactivación 200 y la repetida
+también 200, baja de inexistente 404. La base quedó como estaba (limpieza
+SQL directa).
+
+**Fase 3 cerrada — 22 RF con veredicto, 141 tests, clippy 0/0, spec 003
+`Estado: implementada`.**
   - Tabla RF → test → verificación en este archivo; bordes confirmados con
     `cargo run` + `curl` sobre los seis endpoints; spec 003 con `Estado:
     implementada`; `MEMORY.md` al día (Fase 3 cerrada, próxima Fase 4).

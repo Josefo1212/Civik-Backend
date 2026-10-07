@@ -1,6 +1,6 @@
 # Spec 003 — Estudiantes (alta individual, consulta, edición, baja y listado por sección)
 
-Estado: aprobada
+Estado: implementada
 
 ## Contexto y objetivo
 

@@ -33,8 +33,24 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `oneshot` en `tests/http_sections.rs` (14). **78 tests**, clippy **0/0**.
   `_health` ya no miente: responde **503** real cuando la base cae (antes
   `let _ =` y siempre 200), probado con `tower::ServiceExt::oneshot` en
-  `tests/health.rs`. **Fase 2 cerrada**; sigue la **Fase 3 (`students`)**
-  del orden de construcción.
+  `tests/health.rs`. **Fase 2 cerrada**.
+- **Fase 3 — `students`**, con SDD (spec 003 **implementada**, 22 RF con
+  veredicto en `tasks.md`). T1: `domain.rs` (`colapsar_espacios`,
+  `preparar_entrada`, `ErrorEntrada`, 18 unit tests). T2: `AppError::NotFound`
+  pasa a `NotFound(String)` y arm `(23505, uq_students_national_id)` →
+  `Conflict` ("Ya existe un estudiante con esa cédula");
+  `sections/handler.rs` ajustado. T3–T6: `queries.rs` con `ErrorEstudiante`
+  (`EstudianteNoExiste`, `SeccionNoExiste`, `SeccionInactiva`, `Sqlx`)
+  `esta` derivado con `thiserror` (por el `?` de los tests) + 5 `.sql`
+  (`create`, `get_by_id`, `list_by_section`, `update`, `set_active`):
+  `crear`, `consultar`, `listar_por_seccion` (orden
+  `lower(last_name), lower(first_name), id`, bandera `$2::boolean OR active`),
+  `editar` (valida la sección **solo cuando cambia**, RF-15 literal) y
+  `set_active` idempotente; 31 tests en `tests/students.rs`. T7: `handler.rs`
+  (6 endpoints en `app.rs`; sin `DELETE` → `curl -X DELETE` responde 405,
+  RF-22) + 11 tests `oneshot` en `tests/http_students.rs` (commitean, limpian
+  con `DELETE` SQL directo). **141 tests**, clippy **0/0**. **Fase 3
+  cerrada**; sigue la **Fase 4 (`lapses`)** del orden de construcción.
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -103,13 +119,24 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   SAVEPOINT x`) sobre la misma transacción.
 - Un error Postgres también puede dejar `query_scalar` sin deducir el tipo de
   salida: anotar `let id: Uuid = query_scalar(...)` explícitamente.
+- **El host no tiene `psql`** (sí `docker`): el contenedor
+  `pruebapostgres-postgres-1` es quien lo ofrece a través de
+  `docker exec ... psql -U josefo -d civik_dev`.
+- **`psql -c` con varias sentencias es una sola transacción**: si la
+  segunda falla, la primera se revierte en silencio. Para borrados de
+  limpieza conviene un `-c` por sentencia.
+- **`updated_at` es `TIMESTAMPTZ`**: para leerlo hay que mapear
+  `chrono::DateTime<Utc>`; `NaiveDateTime` falla con "not compatible".
+- **Reasignar una cédula a su propio dueño no es conflicto**: la
+  restricción `uq_students_national_id` solo rechaza la cédula de otro
+  estudiante; el PUT que primero silencia y luego devuelve la misma cédula
+  responde 200 (comportamiento correcto, no un bug).
 
 ## Próximos pasos
 
-- **Fase 3 — `students`**: CRUD directo, mismo patrón que `sections` (spec
-  nueva con el skill `sdd`), dependiente de `sections` (FK).
-- Los `dead_code` de `shared/*` y el `#[allow(dead_code)]` de
-  `sections/domain.rs` los limpia T9.
+- **Fase 4 — `lapses`**: hexagonal parcial (alta, cierre, validaciones de
+  fechas), dependencia de `events`. Con SDD, spec nueva.
+- Los `dead_code` de `shared/*` los limpia el cierre de la fase en curso.
 
 ## Bitácora
 
@@ -158,3 +185,18 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   (RF→test→verificación manual), borde HTTP confirmado con `cargo run` +
   `curl` (201/200/204/400/404/409 según el plan §7, JSON `snake_case`
   normalizado), spec 002 con `Estado: implementada`. **Fase 2 cerrada.**
+- **Fase 3 — T1/T2 (2026-10-06)** — `students/domain.rs` puro (18 tests) +
+  `NotFound(String)` y la cédula como `Conflict`. 98 tests.
+- **Fase 3 — T3/T4 (2026-10-06)** — `crear` (verifica sección en la misma
+  tx, auditoría "alta"; `ErrorEstudiante` con `thiserror`) y
+  `consultar`/`listar_por_seccion`. 113 tests.
+- **Fase 3 — T5/T6 (2026-10-06)** — `editar` (valida la sección solo si
+  cambia; `students_names_not_blank` se prueba por bypass: 23514) y
+  `set_active` idempotente. 130 tests.
+- **Fase 3 — T7 (2026-10-06)** — `handler.rs` + rutas (alias
+  `estudiantes` en `app.rs` para el clash de nombres) + 11 tests `oneshot`.
+  141 tests.
+- **Fase 3 — T8 (2026-10-06)** — veredicto de los 22 RF (RF-16 marcado
+  parcial hasta la Fase 7; RF-22 por ausencia, `curl -X DELETE` → 405),
+  bordes con `cargo run` + `curl` y limpieza SQL directa, spec 003 con
+  `Estado: implementada`. **Fase 3 cerrada.**
