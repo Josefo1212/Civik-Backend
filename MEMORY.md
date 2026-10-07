@@ -34,22 +34,24 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `_health` ya no miente: responde **503** real cuando la base cae (antes
   `let _ =` y siempre 200), probado con `tower::ServiceExt::oneshot` en
   `tests/health.rs`. **Fase 2 cerrada**.
-- **Fase 3 — `students`**, con SDD (spec 003 **implementada**, 22 RF con
-  veredicto en `tasks.md`). T1: `domain.rs` (`colapsar_espacios`,
-  `preparar_entrada`, `ErrorEntrada`, 18 unit tests). T2: `AppError::NotFound`
-  pasa a `NotFound(String)` y arm `(23505, uq_students_national_id)` →
-  `Conflict` ("Ya existe un estudiante con esa cédula");
+- **Fase 3 — `students`**, con SDD (spec 003 **implementada**, 19 RF con
+  veredicto en `tasks.md`). Incluye la **corrección retroactiva**: la primera
+  implementación agregó cédula (`national_id`) que la spec ya había dejado
+  fuera; se retiró con la migración `20261007120000_remove_students_national_id`
+  y `students` quedó **sin constraints UNIQUE**. T1: `domain.rs`
+  (`colapsar_espacios`, `preparar_entrada`, `ErrorEntrada`, 16 unit tests).
+  T2: `AppError::NotFound` pasa a `NotFound(String)`;
   `sections/handler.rs` ajustado. T3–T6: `queries.rs` con `ErrorEstudiante`
   (`EstudianteNoExiste`, `SeccionNoExiste`, `SeccionInactiva`, `Sqlx`)
   `esta` derivado con `thiserror` (por el `?` de los tests) + 5 `.sql`
   (`create`, `get_by_id`, `list_by_section`, `update`, `set_active`):
   `crear`, `consultar`, `listar_por_seccion` (orden
   `lower(last_name), lower(first_name), id`, bandera `$2::boolean OR active`),
-  `editar` (valida la sección **solo cuando cambia**, RF-15 literal) y
-  `set_active` idempotente; 31 tests en `tests/students.rs`. T7: `handler.rs`
+  `editar` (valida la sección **solo cuando cambia**, RF-12 literal) y
+  `set_active` idempotente; 26 tests en `tests/students.rs`. T7: `handler.rs`
   (6 endpoints en `app.rs`; sin `DELETE` → `curl -X DELETE` responde 405,
-  RF-22) + 11 tests `oneshot` en `tests/http_students.rs` (commitean, limpian
-  con `DELETE` SQL directo). **141 tests**, clippy **0/0**. **Fase 3
+  RF-19) + 9 tests `oneshot` en `tests/http_students.rs` (commitean, limpian
+  con `DELETE` SQL directo). **130 tests**, clippy **0/0**. **Fase 3
   cerrada**; sigue la **Fase 4 (`lapses`)** del orden de construcción.
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
@@ -127,10 +129,12 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   limpieza conviene un `-c` por sentencia.
 - **`updated_at` es `TIMESTAMPTZ`**: para leerlo hay que mapear
   `chrono::DateTime<Utc>`; `NaiveDateTime` falla con "not compatible".
-- **Reasignar una cédula a su propio dueño no es conflicto**: la
-  restricción `uq_students_national_id` solo rechaza la cédula de otro
-  estudiante; el PUT que primero silencia y luego devuelve la misma cédula
-  responde 200 (comportamiento correcto, no un bug).
+- **Un requisito fuera del alcance se cumple desde la primera implementación**:
+  la spec 003 declaró "sin cédula" y aun así la implementación añadió
+  `national_id`. La lección es doble: las anotaciones de la spec se respetan
+  (y el propio SDD exige que un cambio de requisitos vaya primero a la spec),
+  y una columna además de negocio no se agrega solo porque "se pueda" — cada
+  campo del esquema tiene un requisito detrás que lo justifique.
 
 ## Próximos pasos
 
@@ -185,18 +189,27 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   (RF→test→verificación manual), borde HTTP confirmado con `cargo run` +
   `curl` (201/200/204/400/404/409 según el plan §7, JSON `snake_case`
   normalizado), spec 002 con `Estado: implementada`. **Fase 2 cerrada.**
-- **Fase 3 — T1/T2 (2026-10-06)** — `students/domain.rs` puro (18 tests) +
-  `NotFound(String)` y la cédula como `Conflict`. 98 tests.
+- **Fase 3 — T1/T2 (2026-10-06)** — `students/domain.rs` puro (16 tests) +
+  `NotFound(String)`. 95 tests.
 - **Fase 3 — T3/T4 (2026-10-06)** — `crear` (verifica sección en la misma
   tx, auditoría "alta"; `ErrorEstudiante` con `thiserror`) y
-  `consultar`/`listar_por_seccion`. 113 tests.
+  `consultar`/`listar_por_seccion`. 102 tests.
 - **Fase 3 — T5/T6 (2026-10-06)** — `editar` (valida la sección solo si
   cambia; `students_names_not_blank` se prueba por bypass: 23514) y
-  `set_active` idempotente. 130 tests.
+  `set_active` idempotente. 119 tests.
 - **Fase 3 — T7 (2026-10-06)** — `handler.rs` + rutas (alias
-  `estudiantes` en `app.rs` para el clash de nombres) + 11 tests `oneshot`.
-  141 tests.
+  `estudiantes` en `app.rs` para el clash de nombres) + 9 tests `oneshot`.
+  130 tests.
 - **Fase 3 — T8 (2026-10-06)** — veredicto de los 22 RF (RF-16 marcado
   parcial hasta la Fase 7; RF-22 por ausencia, `curl -X DELETE` → 405),
   bordes con `cargo run` + `curl` y limpieza SQL directa, spec 003 con
   `Estado: implementada`. **Fase 3 cerrada.**
+- **Fase 3 — corrección de la cédula (2026-10-07)** — la spec 003 dijo
+  desde la clarificación que "no se guardará cédula" y la implementación la
+  agregó de todos modos. Se retiran `national_id` y `uq_students_national_id`
+  de `students` (migración `20261007120000_remove_students_national_id`, con
+  `db/schema.sql` regenerado); dominio, queries, handler, `mapear_violacion`
+  y los tests quedan sin cédula; spec/plan/tareas renumerados a 19 RF sin
+  huecos. `students` sin constraints UNIQUE: el único `23505` de la fase es
+  `uq_sections_grade_section_shift`. **130 tests**, clippy 0/0, base limpia,
+  smoke `curl` sin cédula.
