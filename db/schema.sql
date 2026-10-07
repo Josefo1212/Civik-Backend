@@ -579,7 +579,6 @@ CREATE TABLE public.sections (
 CREATE TABLE public.students (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     id_section uuid NOT NULL,
-    national_id character varying(20),
     first_name character varying(50) NOT NULL,
     last_name character varying(50) NOT NULL,
     phone character varying(30),
@@ -684,14 +683,6 @@ ALTER TABLE ONLY public.lapses
 
 ALTER TABLE ONLY public.sections
     ADD CONSTRAINT uq_sections_grade_section_shift UNIQUE (grade_level, section, shift);
-
-
---
--- Name: students uq_students_national_id; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.students
-    ADD CONSTRAINT uq_students_national_id UNIQUE (national_id);
 
 
 --
@@ -937,4 +928,5 @@ ALTER TABLE ONLY public.students
 
 INSERT INTO public.schema_migrations (version) VALUES
     ('20260926162010'),
-    ('20261006010939');
+    ('20261006010939'),
+    ('20261007120000');
