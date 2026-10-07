@@ -1,5 +1,6 @@
 use axum::{extract::State, http::StatusCode, routing::get, Router};
 use sqlx::PgPool;
+use tracing::warn;
 
 pub fn build_router(pool: PgPool) -> Router {
     Router::new()
@@ -9,6 +10,11 @@ pub fn build_router(pool: PgPool) -> Router {
 
 #[axum::debug_handler]
 async fn health_check(State(pool): State<PgPool>) -> StatusCode {
-    let _ = sqlx::query("SELECT 1").fetch_one(&pool).await;
-    StatusCode::OK
+    match sqlx::query("SELECT 1").fetch_one(&pool).await {
+        Ok(_) => StatusCode::OK,
+        Err(error) => {
+            warn!(%error, "[Health] la base de datos no respondió");
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+    }
 }
