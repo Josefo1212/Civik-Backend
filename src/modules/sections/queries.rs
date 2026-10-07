@@ -1,6 +1,7 @@
 use crate::modules::sections::domain::{DatosSeccion, Grado};
 use crate::shared::audit;
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use serde_json::json;
 use sqlx::{FromRow, PgExecutor, PgTransaction};
 use uuid::Uuid;
@@ -12,7 +13,7 @@ use uuid::Uuid;
 /// (`shift_type`): sqlx no mapea enums propios en sus macros de compilación,
 /// así que el catálogo lo garantiza el dominio y el enum de Postgres, y la
 /// columna se lee como texto (ver `create.sql`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Seccion {
     pub id: Uuid,
     pub grade_level: String,

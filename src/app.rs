@@ -1,10 +1,26 @@
-use axum::{extract::State, http::StatusCode, routing::get, Router};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+    Router,
+};
 use sqlx::PgPool;
 use tracing::warn;
+
+use crate::modules::sections::handler;
 
 pub fn build_router(pool: PgPool) -> Router {
     Router::new()
         .route("/_health", get(health_check))
+        .route("/sections", post(handler::crear).get(handler::listar))
+        .route(
+            "/sections/{id}",
+            get(handler::consultar)
+                .put(handler::editar)
+                .delete(handler::eliminar),
+        )
+        .route("/sections/{id}/baja", post(handler::baja))
+        .route("/sections/{id}/reactivar", post(handler::reactivar))
         .with_state(pool)
 }
 

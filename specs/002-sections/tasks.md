@@ -109,7 +109,7 @@ exista en la base, ningún `.sql` que la mencione compila.
     baja se consulta por identificador; un identificador inexistente no
     devuelve fila; dos listados seguidos devuelven el mismo orden.
 
-- [ ] **T8. `handler.rs` y las rutas en `app.rs`.**
+- [x] **T8. `handler.rs` y las rutas en `app.rs`.**
   RF-1 a RF-27 (bordes HTTP: códigos de estado y forma del JSON)
   - `tower` como dev-dependency para poder probar con `ServiceExt::oneshot`
     sin abrir un puerto.

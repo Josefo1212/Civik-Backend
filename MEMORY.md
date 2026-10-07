@@ -11,7 +11,7 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `config/database.rs`, `shared/{error,audit,round}.rs`, `GET /_health`.
   **Fases 0 y 1** de "Orden de construcción" (`AGENTS.md`) completas.
 - **Fase 2 — `sections`**, primer uso de SDD. Spec 002 **aprobada**
-  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T7 hechas**:
+  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T8 hechas**:
   migración `20261006010939_sections_active_and_not_blank` (`active`,
   `sections_not_blank`) con 7 tests en `tests/sections_migracion.rs`;
   `sections/domain.rs` con `Grado`/`Turno`, `preparar_entrada` y
@@ -26,10 +26,14 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `listar_activas` (filtro opcional por grado; orden canónico con
   `array_position($2::text[], grade_level)` + `COALESCE(..., 99)`, el array
   sale de `Grado::TODOS`), todos con auditoría en la misma tx, 19 tests en
-  `tests/sections.rs`. **64 tests**, clippy **0/0**.
+  `tests/sections.rs`; `handler.rs` con los 7 endpoints montados en
+  `app.rs` (`POST/GET /sections`, `GET/PUT/DELETE /sections/{id}`,
+  `POST /sections/{id}/baja|reactivar`) y sus bordes HTTP probados con
+  `oneshot` en `tests/http_sections.rs` (14). **78 tests**, clippy **0/0**.
   `_health` ya no miente: responde **503** real cuando la base cae (antes
   `let _ =` y siempre 200), probado con `tower::ServiceExt::oneshot` en
-  `tests/health.rs`. Sigue **T8**: `handler.rs` y las rutas en `app.rs`.
+  `tests/health.rs`. Sigue **T9**: `#![deny(clippy::unwrap_used, expect_used)]` y
+  clippy limpio.
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -101,8 +105,9 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 
 ## Próximos pasos
 
-- **T8**: `handler.rs` y las rutas en `app.rs` (7 endpoints, bordes HTTP con
-  `tower::ServiceExt::oneshot`).
+- **T9**: `#![deny(clippy::unwrap_used, expect_used)]` (solo con excepción en
+  `main.rs` y `config/database.rs`), clippy limpio en `--all-targets`.
+- **T10**: validación RF por RF y cierre de la fase (`cargo run` + `curl`).
 - Los `dead_code` de `shared/*` y el `#[allow(dead_code)]` de
   `sections/domain.rs` los limpia T9.
 
@@ -137,3 +142,11 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   tests nuevos en `tests/sections.rs` (orden + RNF-3 estable, filtro por
   grado, get_by_id de inactiva, inexistente). **64 tests totales**, clippy
   0/0.
+- **Fase 2 — T8 (2026-10-06)** — `handler.rs` (7 handlers, transacción por
+  operación de escritura, `a_not_found` para RowNotFound→404) + rutas en
+  `app.rs` + `tower::ServiceExt::oneshot` en `tests/http_sections.rs` (14
+  tests HTTP). **Hook**: los tests HTTP hacen `commit` de verdad, así que
+  usan subdivisiones únicas por test y limpian con `DELETE` al final; si un
+  test falle a media deja una huérfana que puede ensuciar otro listado —
+  las aserciones de orden usan posiciones relativas, no el arreglo entero.
+  **78 tests totales**, clippy 0/0, base limpia al terminar.
