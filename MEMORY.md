@@ -10,8 +10,9 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `Cargo.toml` y código real (commit `1cd5daa`): `main.rs`, `app.rs`,
   `config/database.rs`, `shared/{error,audit,round}.rs`, `GET /_health`.
   **Fases 0 y 1** de "Orden de construcción" (`AGENTS.md`) completas.
-- **Fase 2 — `sections`**, primer uso de SDD. Spec 002 **aprobada**
-  (`specs/002-sections/`: 27 RF, plan, tasks T1–T10). **T1 a T8 hechas**:
+- **Fase 2 — `sections`**, primer uso de SDD. Spec 002 **implementada**
+  (27 RF con veredicto en `tasks.md`, T1–T10 hechas; bordes HTTP además
+  confirmados con `cargo run` + `curl` — T10).
   migración `20261006010939_sections_active_and_not_blank` (`active`,
   `sections_not_blank`) con 7 tests en `tests/sections_migracion.rs`;
   `sections/domain.rs` con `Grado`/`Turno`, `preparar_entrada` y
@@ -32,8 +33,8 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `oneshot` en `tests/http_sections.rs` (14). **78 tests**, clippy **0/0**.
   `_health` ya no miente: responde **503** real cuando la base cae (antes
   `let _ =` y siempre 200), probado con `tower::ServiceExt::oneshot` en
-  `tests/health.rs`. Sigue **T9**: `#![deny(clippy::unwrap_used, expect_used)]` y
-  clippy limpio.
+  `tests/health.rs`. **Fase 2 cerrada**; sigue la **Fase 3 (`students`)**
+  del orden de construcción.
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -105,9 +106,8 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 
 ## Próximos pasos
 
-- **T9**: `#![deny(clippy::unwrap_used, expect_used)]` (solo con excepción en
-  `main.rs` y `config/database.rs`), clippy limpio en `--all-targets`.
-- **T10**: validación RF por RF y cierre de la fase (`cargo run` + `curl`).
+- **Fase 3 — `students`**: CRUD directo, mismo patrón que `sections` (spec
+  nueva con el skill `sdd`), dependiente de `sections` (FK).
 - Los `dead_code` de `shared/*` y el `#[allow(dead_code)]` de
   `sections/domain.rs` los limpia T9.
 
@@ -150,3 +150,11 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   test falle a media deja una huérfana que puede ensuciar otro listado —
   las aserciones de orden usan posiciones relativas, no el arreglo entero.
   **78 tests totales**, clippy 0/0, base limpia al terminar.
+- **Fase 2 — T9 (2026-10-06)** — `#![deny(clippy::unwrap_used,
+  clippy::expect_used)]` en `lib.rs` con `#![allow(...)]` solo en
+  `main.rs` (y el de `error.rs` para los tests unitarios); se quitó el
+  `#![allow(dead_code)]` de `domain.rs`. Clippy 0/0.
+- **Fase 2 — T10 (2026-10-06)** — veredicto de los 27 RF en `tasks.md`
+  (RF→test→verificación manual), borde HTTP confirmado con `cargo run` +
+  `curl` (201/200/204/400/404/409 según el plan §7, JSON `snake_case`
+  normalizado), spec 002 con `Estado: implementada`. **Fase 2 cerrada.**

@@ -132,7 +132,7 @@ exista en la base, ningún `.sql` que la mencione compila.
     nueve warnings preexistentes de código no usado desaparecieron porque
     ya no hay código sin usar.
 
-- [ ] **T10. Validación RF por RF, llamada real y cierre de la fase.**
+- [x] **T10. Validación RF por RF, llamada real y cierre de la fase.**
   Todos
   - Recorrer los 27 RF de la spec anotando, para cada uno, qué test lo cubre
     y si pasa.
@@ -161,3 +161,44 @@ exista en la base, ningún `.sql` que la mencione compila.
   transacción descartable.
 - **Ninguna tarea hace `commit`.** Si un test deja datos en `civik_dev`, es un
   error en el test, no en la base.
+
+## Veredictos RF por RF (T10)
+
+| RF | Qué cubre el test | Verificación manual |
+|---|---|---|
+| 1 | `el_alta_persiste_la_fila_normalizada`; `alta_201_devuelve_la_seccion_normalizada_en_snake_case` | `POST /sections` → 201 con id |
+| 2 | `el_alta_deja_su_entrada_en_el_historial` + normalización en http | curl: `" 4to "` → `4to` |
+| 3 | tests de `Turno` en domain + http | curl: `matutino` → `MATUTINO` |
+| 4 | tests de `normalizar_texto` en domain + http | curl: `" 4to "` recortado |
+| 5 | `la_edicion_rechaza_datos_invalidos_antes_de_tocar_la_base`; `alta_invalida_responde_400` | curl: `9no` → 400 |
+| 6 | `el_error_de_turno_enumera_los_dos_admitidos` | (unitario) |
+| 7 | `el_error_de_grado_enumera_los_cinco_admitidos`; `listado_con_grado_no_admitido_responde_400` | curl: `?grado=9no` → 400 |
+| 8 | `el_alta_duplicada_de_una_seccion_activa_falla`; `...dada_de_baja_tambien_falla`; `alta_duplicada_responde_409` | curl: duplicado → 409 |
+| 9 | `listar_activas_ordena_por_grado_y_subdivision_y_omite_inactivas`; http | curl: lista → 200 |
+| 10 | `listar_activas_filtra_por_un_solo_grado`; http | curl: `?grado=1ro` → 200 |
+| 11 | (idem RF-9, aserciones de posición) | curl: `1ro` antes que `4to` |
+| 12 | `get_by_id_trae_una_seccion_dada_de_baja`; `consulta_200...` | curl: → 200 |
+| 13 | `get_by_id_inexistente_no_devuelve_fila`; `consulta_inexistente_responde_404` | curl: → 404 |
+| 14 | `la_edicion_normaliza_igual_que_el_alta`; `edicion_200_normaliza...` | curl: PUT → 200 |
+| 15 | (misma validación de RF-5 en el PUT) | — |
+| 16 | (misma validación de RF-6/RF-7 en el PUT) | — |
+| 17 | `la_edicion_a_una_combinacion_ajena_se_rechaza`; http → 409 | curl: → 409 |
+| 18 | `la_baja_marca_inactiva_y_es_idempotente`; `baja_y_reactivacion_200_idempotentes` | curl: baja → 200 |
+| 19 | (mismo test, segunda llamada) | curl: baja repetida → 200 |
+| 20 | `la_reactivacion_marca_activa_de_nuevo_y_es_idempotente` | curl: reactivar → 200 |
+| 21 | (mismo test, segunda llamada) | curl: reactivar repetida → 200 |
+| 22 | `eliminar_una_seccion_vacia_la_borra_y_deja_auditoria`; `...dada_de_baja_sin_estudiantes...`; `eliminacion_204...` | curl: DELETE → 204 |
+| 23 | `eliminar_...con_estudiante_activo_falla_y_la_fila_sigue`; `...inactivo_tambien_falla`; http → 409 | curl: con estudiante → 409 |
+| 24 | (cubierto por RF-9) | curl: la inactiva no aparece |
+| 25 | `get_by_id_trae_una_seccion_dada_de_baja` | — |
+| 26 | `editar_y_dar_de_baja_una_seccion_con_estudiantes_los_deja_en_ella` | — |
+| 27 | `el_alta_deja_su_entrada_en_el_historial`; `eliminar_...deja_auditoria` | — |
+
+RNF-3 (orden estable): segunda llamada de `listar_activas_...`; RNF-1/RNF-2
+cubiertos por `preparar_entrada` y las transacciones de los tests.
+
+**Verificación con el servidor real (cargo run + curl, 2026-10-06):** todos
+los bordes del plan §7 respondieron el código esperado (201/200/204/400/404/
+409) contra la API escuchando en `127.0.0.1:3000`, la forma del JSON fue
+`snake_case` con la sección normalizada (grado y subdivisión en minúscula,
+turno en mayúscula), y la base quedó sin filas remanentes.

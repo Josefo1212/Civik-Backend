@@ -1,6 +1,6 @@
 # Spec 002 — Secciones (alta, consulta, edición y baja)
 
-Estado: aprobada
+Estado: implementada
 
 ## Contexto y objetivo
 
