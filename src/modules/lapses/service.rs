@@ -183,10 +183,16 @@ pub async fn cerrar(pool: &PgPool, id: Uuid) -> Result<Lapso, AppError> {
 /// La única excepción constitucional a "nada se borra": vacío, no `CLOSED` y
 /// no terminado. El service valida la transición (`no CLOSED`), la condición
 /// temporal del guardarraíl (`validar_borrado_permitido`, con la fecha de hoy
-/// inyectada para que el dominio siga siendo puro) y deja que el `23001` de
-/// las FKs RESTRICT de `events`/`grade_overrides` suba como `Conflict` si el
-/// lapso tiene datos (RF-18). La auditoría se escribe en la misma transacción,
-/// antes del borrado (`queries::eliminar`).
+/// inyectada para que el dominio siga siendo puro) y anticipa RF-18 con
+/// `tiene_datos`: si el lapso tiene eventos u overrides responde el `409`
+/// entendible. La auditoría se escribe en la misma transacción, antes del
+/// borrado (`queries::eliminar`).
+///
+/// El pre-chequeo espeja las condiciones de `lapses_delete_guard` porque ese
+/// trigger dispara su `23514` ANTES de que las FKs RESTRICT puedan respon
+/// der: por DELETE, el código `23001` de `events_id_lapse_fkey` nunca se
+/// alcanza (el guard evalúa las mismas filas primero y aborta). El guardarraíl
+/// y las FKs siguen siendo la defensa si el service falla.
 pub async fn eliminar(pool: &PgPool, id: Uuid) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
 
@@ -195,6 +201,12 @@ pub async fn eliminar(pool: &PgPool, id: Uuid) -> Result<(), AppError> {
     validar_transicion(&estado, Operacion::Eliminar).map_err(dominio_a_conflict)?;
     validar_borrado_permitido(lapso.end_date, Utc::now().date_naive())
         .map_err(dominio_a_conflict)?;
+
+    if queries::tiene_datos(tx.as_mut(), id).await? {
+        return Err(AppError::Conflict(
+            "No se puede borrar: el lapso tiene eventos u overrides asociados".to_string(),
+        ));
+    }
 
     queries::eliminar(&mut tx, id).await.map_err(a_not_found)?;
     tx.commit().await?;

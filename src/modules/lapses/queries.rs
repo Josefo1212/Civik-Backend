@@ -240,8 +240,26 @@ pub async fn eliminar(tx: &mut PgTransaction<'_>, id: Uuid) -> sqlx::Result<Laps
     Ok(fila.en_lapso())
 }
 
-/// Cuántos eventos de `id_lapse` caerían fuera de `[inicio, fin]` (RF-11).
+/// Si el lapso tiene algún dato asociado (eventos u overrides) que impida
+/// borrarlo (RF-18).
 ///
+/// Es el pre-chequeo del service sobre `has_data.sql`: espeja las condiciones
+/// de `lapses_delete_guard` para responder un `409` entendible antes de que el
+/// trigger lance su `23514`. La FK `events_id_lapse_fkey` (RESTRICT) queda
+/// como red extra, pero por DELETE no se alcanza: el guard evalúa las mismas
+/// filas primero.
+pub async fn tiene_datos<'e, E>(executor: E, id_lapse: Uuid) -> sqlx::Result<bool>
+where
+    E: PgExecutor<'e>,
+{
+    let fila = sqlx::query_file!("src/modules/lapses/queries/has_data.sql", id_lapse)
+        .fetch_one(executor)
+        .await?;
+
+    Ok(fila.tiene_datos.unwrap_or(false))
+}
+
+/// Cuántos eventos de `id_lapse` caerían fuera de `[inicio, fin]` (RF-11).
 /// Es el pre-chequeo del service sobre `events_outside.sql`: si el resultado
 /// es mayor que cero, el service rechaza el movimiento de fechas con un 409
 /// entendible antes de que la base lance el `23514` de su trigger.
