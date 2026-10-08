@@ -52,7 +52,8 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   (6 endpoints en `app.rs`; sin `DELETE` → `curl -X DELETE` responde 405,
   RF-19) + 9 tests `oneshot` en `tests/http_students.rs` (commitean, limpian
   con `DELETE` SQL directo). **130 tests**, clippy **0/0**. **Fase 3
-  cerrada**; sigue la **Fase 4 (`lapses`)** del orden de construcción.
+  cerrada**.
+- **Fase 4 (`lapses`)**: hexagonal parcial (domain+service+queries, 7 rutas HTTP). T1–T8 completos: 23 tests integración (`tests/lapses.rs`), 21 HTTP (`tests/http_lapses.rs`), 6 defensa BD (`tests/conflictos_bd.rs`). **Total +50 tests lapses**, suite completa verde, clippy 0/0. **Fase 4 cerrada**; sigue **Fase 5 (`events` CRUD manual)**.
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -153,8 +154,7 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 
 ## Próximos pasos
 
-- **Fase 4 — `lapses`**: hexagonal parcial (alta, cierre, validaciones de
-  fechas), dependencia de `events`. Con SDD, spec nueva.
+- **Fase 5 — `events` (CRUD manual primero)**: crear presentación/práctica extra/práctica regular manual (`source MANUAL`), cancelar con motivo; dependerá de `lapses`.
 - Los `dead_code` de `shared/*` los limpia el cierre de la fase en curso.
 
 ## Bitácora

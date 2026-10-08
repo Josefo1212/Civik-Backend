@@ -1,6 +1,6 @@
 # Spec 004 — Lapsos (alta, consulta, edición, activación, cierre y borrado del lapso vacío)
 
-Estado: aprobada
+Estado: implementada
 
 ## Contexto y objetivo
 
