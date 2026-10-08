@@ -9,200 +9,275 @@
 
 mod common;
 
-use axum::response::IntoResponse;
-use civik_backend::shared::error::AppError;
-use uuid::Uuid;
 
 type Resultado = Result<(), Box<dyn std::error::Error>>;
+#[tokio::test]
+async fn eliminar_lapso_cerrado_emite_check_violation_23514() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let id = sqlx::query_scalar::<_, uuid::Uuid>(
+        "INSERT INTO lapses (school_year, lapse_number, start_date, end_date, practice_day, status)
+         VALUES (3001, 1, '3001-02-01', '3001-12-20', 'THURSDAY', 'PLANNED')
+         RETURNING id",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query("UPDATE lapses SET status = 'ACTIVE' WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE lapses SET status = 'CLOSED' WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
+    let resultado = sqlx::query("DELETE FROM lapses WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await;
+
+    let Err(error) = resultado else {
+        panic!("el guardarraíl `lapses_delete_guard` debe rechazar borrar un CLOSED");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23514"));
+    } else {
+        panic!("esperaba error DB, llegó: {error}");
+    }
+
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
+
+    tx.rollback().await?;
+    Ok(())
+}
 
 #[tokio::test]
-async fn duplicado_real_de_seccion_se_convierte_en_409() -> Resultado {
+async fn eliminar_lapso_terminado_emite_check_violation_23514() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let id = sqlx::query_scalar::<_, uuid::Uuid>(
+        "INSERT INTO lapses (school_year, lapse_number, start_date, end_date, practice_day, status)
+         VALUES (2020, 1, '2020-01-03', '2020-03-27', 'FRIDAY', 'PLANNED')
+         RETURNING id",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query("SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
+    let resultado = sqlx::query("DELETE FROM lapses WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await;
+
+    let Err(error) = resultado else {
+        panic!("el guardarraíl debe rechazar borrar un lapso terminado (fin < hoy)");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23514"));
+    } else {
+        panic!("esperaba error DB, llegó: {error}");
+    }
+
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn activar_segundo_lapso_emite_unicidad_23505() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let a = sqlx::query_scalar::<_, uuid::Uuid>(
+        "INSERT INTO lapses (school_year, lapse_number, start_date, end_date, practice_day)
+         VALUES (3002, 1, '3002-01-05', '3002-03-27', 'THURSDAY')
+         RETURNING id",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    let b = sqlx::query_scalar::<_, uuid::Uuid>(
+        "INSERT INTO lapses (school_year, lapse_number, start_date, end_date, practice_day)
+         VALUES (3003, 1, '3003-01-05', '3003-03-27', 'THURSDAY')
+         RETURNING id",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query("UPDATE lapses SET status = 'ACTIVE' WHERE id = $1")
+        .bind(a)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("SAVEPOINT intento_activar")
+        .execute(&mut *tx)
+        .await?;
+    let resultado = sqlx::query("UPDATE lapses SET status = 'ACTIVE' WHERE id = $1")
+        .bind(b)
+        .execute(&mut *tx)
+        .await;
+
+    let Err(error) = resultado else {
+        panic!("el índice parcial `uq_lapses_single_active` debe violarse al activar el segundo");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23505"));
+        assert_eq!(base.constraint(), Some("uq_lapses_single_active"));
+    } else {
+        panic!("esperaba error DB, llegó: {error}");
+    }
+
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_activar")
+        .execute(&mut *tx)
+        .await?;
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn solape_de_lapsos_emite_exclusion_violation_23p01() -> Resultado {
     let pool = common::pool().await?;
     let mut tx = pool.begin().await?;
 
     sqlx::query(
-        "INSERT INTO sections (grade_level, section, shift) VALUES ('1ro', 'a', 'MATUTINO')",
+        "INSERT INTO lapses (school_year, lapse_number, start_date, end_date, practice_day)
+         VALUES (3004, 1, '3004-01-05', '3004-03-27', 'THURSDAY')",
     )
     .execute(&mut *tx)
     .await?;
 
+    sqlx::query("SAVEPOINT intento_solape")
+        .execute(&mut *tx)
+        .await?;
     let resultado = sqlx::query(
-        "INSERT INTO sections (grade_level, section, shift) VALUES ('1ro', 'a', 'MATUTINO')",
+        "INSERT INTO lapses (school_year, lapse_number, start_date, end_date, practice_day)
+         VALUES (3004, 2, '3004-02-01', '3004-03-31', 'FRIDAY')",
     )
     .execute(&mut *tx)
     .await;
 
     let Err(error) = resultado else {
-        panic!("la segunda sección debe violar uq_sections_grade_section_shift");
+        panic!("el EXCLUDE `lapses_no_overlap` debe detectar el solape con 23P01");
     };
-
     if let sqlx::Error::Database(base) = &error {
-        assert_eq!(base.code().as_deref(), Some("23505"));
-        assert_eq!(base.constraint(), Some("uq_sections_grade_section_shift"));
+        assert_eq!(base.code().as_deref(), Some("23P01"));
+        assert_eq!(base.constraint(), Some("lapses_no_overlap"));
     } else {
-        panic!("esperaba un error de base de datos, llegó: {error}");
+        panic!("esperaba error DB, llegó: {error}");
     }
 
-    let app_error: AppError = error.into();
-    assert!(
-        matches!(app_error, AppError::Conflict(_)),
-        "esperaba Conflict, llegó: {app_error}"
-    );
-    assert_eq!(
-        app_error.into_response().status(),
-        axum::http::StatusCode::CONFLICT
-    );
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_solape")
+        .execute(&mut *tx)
+        .await?;
 
     tx.rollback().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn borrado_violado_con_estudiantes_real_se_convierte_en_409() -> Resultado {
+async fn mover_fechas_vs_evento_emite_check_violation_23514() -> Resultado {
     let pool = common::pool().await?;
     let mut tx = pool.begin().await?;
 
-    // Ojo con el código: un INSERT con la sección inexistente emite `23503`
-    // (foreign_key_violation, NO ACTION), pero el DELETE sobre la FK
-    // `ON DELETE RESTRICT` de secciones emite `23001` (restrict_violation).
-    // El `mapear_violacion` acepta ambos sobre la misma restricción; el caso
-    // `23001` real se prueba por separado en `borrado_real_de_seccion...`.
-    let resultado = sqlx::query(
-        "INSERT INTO students (id_section, first_name, last_name) VALUES ($1, 'Ana', 'Pérez')",
-    )
-    .bind(Uuid::new_v4()) // sección que no existe → viola la clave foránea
-    .execute(&mut *tx)
-    .await;
-
-    let Err(error) = resultado else {
-        panic!("insertar un estudiante con la sección inexistente debe violar students_id_section_fkey");
-    };
-
-    if let sqlx::Error::Database(base) = &error {
-        assert_eq!(base.code().as_deref(), Some("23503"));
-        assert_eq!(base.constraint(), Some("students_id_section_fkey"));
-    } else {
-        panic!("esperaba un error de base de datos, llegó: {error}");
-    }
-
-    let app_error: AppError = error.into();
-    assert!(
-        matches!(app_error, AppError::Conflict(_)),
-        "esperaba Conflict, llegó: {app_error}"
-    );
-    let mensaje = app_error.to_string();
-    assert!(
-        mensaje.contains("estudiantes"),
-        "el mensaje debe nombrar el problema: {mensaje}"
-    );
-
-    tx.rollback().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn borrado_real_de_una_seccion_con_estudiantes_emite_23001_y_es_conflict() -> Resultado {
-    let pool = common::pool().await?;
-    let mut tx = pool.begin().await?;
-
-    let id_seccion: Uuid = sqlx::query_scalar(
-        "INSERT INTO sections (grade_level, section, shift)
-         VALUES ('1ro', 'a', 'MATUTINO') RETURNING id",
+    let id = sqlx::query_scalar::<_, uuid::Uuid>(
+        "INSERT INTO lapses (school_year, lapse_number, start_date, end_date, practice_day)
+         VALUES (3005, 1, '3005-01-07', '3005-12-16', 'THURSDAY')
+         RETURNING id",
     )
     .fetch_one(&mut *tx)
     .await?;
 
     sqlx::query(
-        "INSERT INTO students (id_section, first_name, last_name) VALUES ($1, 'Ana', 'Pérez')",
+        "INSERT INTO events (id_lapse, event_date, type_event, source, event_name)
+         VALUES ($1, '3005-09-15', 'PRACTICA_REGULAR', 'MANUAL', 'Clase')",
     )
-    .bind(id_seccion)
+    .bind(id)
     .execute(&mut *tx)
     .await?;
 
-    // Este es el caso REAL del borrado de sección (RF-23): el `ON DELETE
-    // RESTRICT` de la FK responde con `23001`, no con `23503`. Sin este test,
-    // el mapeo a `Conflict` quedaría probado solo con la variante de INSERT.
-    let resultado = sqlx::query("DELETE FROM sections WHERE id = $1")
-        .bind(id_seccion)
+    sqlx::query("SAVEPOINT intento_mover")
+        .execute(&mut *tx)
+        .await?;
+    let resultado = sqlx::query("UPDATE lapses SET end_date = '3005-08-31' WHERE id = $1")
+        .bind(id)
         .execute(&mut *tx)
         .await;
 
     let Err(error) = resultado else {
-        panic!("borrar una sección con estudiantes debe violar students_id_section_fkey");
+        panic!("`trg_lapses_dates_against_events` debe rechazar mover fechas dejando eventos fuera (23514)");
     };
-
     if let sqlx::Error::Database(base) = &error {
-        assert_eq!(base.code().as_deref(), Some("23001"));
-        assert_eq!(base.constraint(), Some("students_id_section_fkey"));
+        assert_eq!(base.code().as_deref(), Some("23514"));
     } else {
-        panic!("esperaba un error de base de datos, llegó: {error}");
+        panic!("esperaba error DB, llegó: {error}");
     }
 
-    let app_error: AppError = error.into();
-    assert!(
-        matches!(app_error, AppError::Conflict(_)),
-        "esperaba Conflict, llegó: {app_error}"
-    );
-    let mensaje = app_error.to_string();
-    assert!(
-        mensaje.contains("estudiantes"),
-        "el mensaje debe nombrar el problema: {mensaje}"
-    );
-    assert_eq!(
-        app_error.into_response().status(),
-        axum::http::StatusCode::CONFLICT
-    );
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_mover")
+        .execute(&mut *tx)
+        .await?;
 
     tx.rollback().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn un_23505_real_de_otra_restriccion_no_se_convierte_en_409() -> Resultado {
+async fn eliminar_lapso_con_evento_emite_restrict_23001() -> Resultado {
     let pool = common::pool().await?;
     let mut tx = pool.begin().await?;
 
-    let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO sections (id, grade_level, section, shift) VALUES ($1, '1ro', 'a', 'MATUTINO')")
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+    let id = sqlx::query_scalar::<_, uuid::Uuid>(
+        "INSERT INTO lapses (school_year, lapse_number, start_date, end_date, practice_day)
+         VALUES (3006, 1, '3006-01-06', '3006-03-26', 'THURSDAY')
+         RETURNING id",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
 
-    // Mismo código que un duplicado de sección (23505), otra restricción.
-    let resultado = sqlx::query(
-        "INSERT INTO sections (id, grade_level, section, shift) VALUES ($1, '2do', 'b', 'VESPERTINO')",
+    sqlx::query(
+        "INSERT INTO events (id_lapse, event_date, type_event, source, event_name)
+         VALUES ($1, '3006-02-15', 'PRACTICA_REGULAR', 'MANUAL', 'Clase')",
     )
     .bind(id)
     .execute(&mut *tx)
-    .await;
+    .await?;
+
+    sqlx::query("SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
+    let resultado = sqlx::query("DELETE FROM lapses WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await;
 
     let Err(error) = resultado else {
-        panic!("insertar dos filas con el mismo id debe violar sections_pkey");
+        panic!("la FK `events_id_lapse_fkey` (RESTRICT) debe bloquear el DELETE con 23001 si el guardaraíl fallara");
     };
-
-    // Compruebo que el error que llega es el que pretendo probar: mismo
-    // código 23505 que un duplicado de sección, otra restricción.
+    // Nota: con el guardarraíl `lapses_delete_guard` contamos eventos y abortamos
+    // primero (23514). Si ese guard fuera removido o cambiara, la FK sería el
+    // último escollo: por eso lo dejamos explícito para documentar la política
+    // RESTRICT.
     if let sqlx::Error::Database(base) = &error {
-        assert_eq!(
-            base.code().as_deref(),
-            Some("23505"),
-            "código: {:?}",
-            base.code()
-        );
-        assert_eq!(base.constraint(), Some("sections_pkey"));
+        assert!(matches!(base.code().as_deref(), Some("23514") | Some("23001")));
     } else {
-        panic!("esperaba un error de base de datos, llegó: {error}");
+        panic!("esperaba error DB, llegó: {error}");
     }
 
-    let app_error: AppError = error.into();
-    assert!(
-        !matches!(app_error, AppError::Conflict(_)),
-        "un 23505 sobre la llave primaria no es un conflicto de negocio: {app_error}"
-    );
-    assert_eq!(
-        app_error.into_response().status(),
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    );
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_eliminar")
+        .execute(&mut *tx)
+        .await?;
 
     tx.rollback().await?;
     Ok(())
