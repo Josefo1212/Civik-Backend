@@ -282,3 +282,17 @@ async fn eliminar_lapso_con_evento_emite_restrict_23001() -> Resultado {
     tx.rollback().await?;
     Ok(())
 }
+#[tokio::test]
+async fn evento_fuera_de_rango_lapso_emite_check_violation_23514() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+    let anio = 2070;
+    let lapso = civik_backend::modules::lapses::queries::crear(
+        &mut tx,
+        civik_backend::modules::lapses::domain::preparar_entrada(&anio.to_string(), "1", &format!("{anio}-09-01"), &format!("{anio}-12-20"), "THURSDAY").unwrap(),
+    )
+    .await?;
+    let res = civik_backend::modules::events::queries::crear_manual(tx.as_mut(), lapso.id, chrono::NaiveDate::from_ymd_opt(anio, 8, 1).unwrap(), "PRACTICA_EXTRA", "Extra").await;
+    assert!(matches!(res, Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23514")));
+    Ok(())
+}

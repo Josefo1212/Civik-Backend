@@ -7,6 +7,7 @@ use axum::{
 use sqlx::PgPool;
 use tracing::warn;
 
+use crate::modules::events::handler as events;
 use crate::modules::lapses::handler as lapses;
 use crate::modules::sections::handler;
 use crate::modules::students::handler as estudiantes;
@@ -42,6 +43,12 @@ pub fn build_router(pool: PgPool) -> Router {
         )
         .route("/lapses/{id}/activar", post(lapses::activar))
         .route("/lapses/{id}/cerrar", post(lapses::cerrar))
+        .route("/events", post(events::crear).get(events::listar))
+        .route(
+            "/events/{id}",
+            get(events::consultar).patch(events::editar),
+        )
+        .route("/events/{id}/cancel", post(events::cancelar))
         .with_state(pool)
 }
 
