@@ -81,9 +81,11 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   **Fase 7 reconciliada y cerrada (Fase B)**: upsert real por PK, padrón
   (`GET /events/{id}/attendance`), `domain` con newtypes y
   `puede_escribir_asistencia`, `POST` 200 con padrón, corrección anidada en
-  `/events/{id}/attendance/{student}`, defensa BD de reglas 4/7/10. **Fase 8
-  (`grades`) sigue pendiente de reconciliar (Fase C).** **Fase 9** (offline)
-  solo T0/T1. **Suite completa: 275 tests, clippy 0/0.**
+  `/events/{id}/attendance/{student}`, defensa BD de reglas 4/7/10.
+  **Fase 8 (`grades`) reconciliada y cerrada (Fase C)**: hexagonal completo,
+  elegibilidad por fecha/lapso, override respeta dos decimales, endpoint por
+  lapso y sección. **Fase 9** (offline) solo T0/T1. **Suite completa: 298
+  tests, clippy 0/0.**
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -195,13 +197,6 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 
 ## Próximos pasos
 
-- **Fase C — Reconciliar `grades` (spec 008)**: hexagonal completo según el
-  plan aprobado — `domain` (`Conteos`, `Nota`, `compute_grade`,
-  `resolver_nota`), `ports` (`GradeRepository`), `adapter_pg` (elegibilidad y
-  overrides), `service`, `handler`
-  (`GET /lapses/{id_lapse}/sections/{id_section}/grades`); tests de dominio
-  puro + integración + HTTP. La ruta y el modelo actual (`GET
-  /lapses/{id}/grades/{student}`) se reemplazan.
 - **Fase 9 — Sincronización offline** (spec 009): hoy solo está el
   reconocimiento del soporte (`updated_at` ya en `attendance`) y los tests
   base (idempotencia + corrección + HTTP). Falta el protocolo en sí:
@@ -353,3 +348,19 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `events.status`). Tests: `tests/attendance.rs` (6), `http_attendance.rs` (1
   secuencial), `conflictos_bd.rs` +4 (reglas 4/7/10). **275 tests, clippy
   0/0.** Fase B cerrada (B8).
+- **Fase C — `grades` reconciliada (2026-10-10)** — T1–T9. `domain.rs` reescrito
+  (`Conteos` con `n_eventos_elegibles`, `Nota { SinNota, Valor }`,
+  `compute_grade`, `resolver_nota`; `rescale` fija 1 decimal en el cálculo y 2
+  en el override). `ports.rs` + `adapter_pg.rs` (delega) + `queries.rs` nuevo
+  (funciones sobre `PgExecutor` para poder probarlas dentro de la transacción;
+  el adaptador atado al pool no vería datos sin commitear). SQL con
+  elegibilidad `SCHEDULED` + (`event_date <= CURRENT_DATE` salvo lapso `CLOSED`)
+  y solo `AUSENTE`; `roster.sql` con override como **subconsulta escalar**
+  (sqlx no deduce nulabilidad de un `LEFT JOIN`). `service.rs`
+  (`notas_de_seccion`, `formatear_nota`); `handler.rs` con
+  `GET /lapses/{id}/sections/{id}/grades` (se retira el endpoint por
+  estudiante). Tests: `grades.rs` (11: dominio + repo falso + integración
+  tx/rollback), `http_grades.rs` (1). Aprendizajes: `query_file!` genera struct
+  con campos nombrados (`fila.campo`, no `.get`); agregados inferidos
+  `Option`; `Decimal::rescale` muta en el lugar. **298 tests, clippy 0/0.** Fase
+  C cerrada.

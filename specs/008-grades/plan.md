@@ -13,7 +13,8 @@ existe porque es la pieza que debe poder probarse **sin Postgres**.
 |---|---|
 | `src/modules/grades/domain.rs` | `Conteos`, `Nota`, `compute_grade` (puro), `resolver_nota` (override prevalece). Pesos en un único lugar. |
 | `src/modules/grades/ports.rs` | `trait GradeRepository` con las consultas que el dominio necesita. |
-| `src/modules/grades/adapter_pg.rs` | Implementación del trait con `sqlx` sobre `queries/*.sql`. |
+| `src/modules/grades/adapter_pg.rs` | Implementación del trait: aporta el `PgPool` y delega cada método en `queries.rs`. |
+| `src/modules/grades/queries.rs` | Una función por `.sql`, sobre un `PgExecutor` genérico, para poder ejercerlas dentro de la transacción de un test. |
 | `src/modules/grades/queries/existe_lapso.sql` | `SELECT EXISTS(...)`. |
 | `src/modules/grades/queries/existe_seccion.sql` | `SELECT EXISTS(...)`. |
 | `src/modules/grades/queries/n_eventos_elegibles.sql` | Cuántos eventos elegibles tiene el lapso (N, a nivel de lapso). |
@@ -47,9 +48,11 @@ fn resolver_nota(conteos: &Conteos, override_: Option<Decimal>) -> Nota;  // RF-
 - Pesos en un único lugar: `PRACTICA_REGULAR = 1`, `PRACTICA_EXTRA = 0.5`,
   `PRESENTACION = 2` (Decimal, nunca `f64`, RNF-3).
 - `compute_grade`: si `n_eventos_elegibles == 0` → `SinNota`; si no,
-  `Valor(round_grade(max(0, 20 − Σ)))` con `shared/round.rs` (un decimal).
-- `resolver_nota`: si hay override → `Valor(override)` **sin redondear** (se
-  devuelve el valor almacenado); si no, `compute_grade`.
+  `Valor(escala(round_grade(max(0, 20 − Σ)), 1))` con `shared/round.rs`: un
+  decimal fijo, para que un 19 entero se presente como `"19.0"`.
+- `resolver_nota`: si hay override → `Valor(escala(override, 2))` **sin
+  redondear** (se devuelve el valor almacenado, con dos decimales); si no,
+  `compute_grade`.
 - N es del lapso: "no hay nada que calificar" no depende del estudiante.
 
 ## Puerto (`trait GradeRepository`)
@@ -115,10 +118,11 @@ verifica en integración creando eventos pasados/futuros y un lapso cerrado.
 
 ## Estrategia de tests
 
-- **Dominio puro** (`tests/grades.rs`, sin base): `compute_grade` con cada peso,
-  `JUSTIFICADO`/`PRESENTE` no descuentan (esto se modela como `AUSENTE`=0), tope
-  en 0, N=0 → `SinNota`, `resolver_nota` con override que prevalece, redondeo a
-  un decimal.
+- **Dominio puro** (unit en `src/modules/grades/domain.rs`, sin base):
+  `compute_grade` con cada peso, `JUSTIFICADO`/`PRESENTE` no descuentan (se
+  modela como `AUSENTE`=0), tope en 0, N=0 → `SinNota`, `resolver_nota` con
+  override que prevalece, redondeo a un decimal. `tests/grades.rs` repite una
+  comprobación de sanidad del dominio público.
 - **Service con `GradeRepository` falso** (RNF-6): un doble en memoria que
   devuelve conteos, N y overrides fijos; verifica que el service una todo y
   respete `SinNota`/`Valor` y el `null` del override ausente.

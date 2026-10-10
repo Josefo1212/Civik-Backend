@@ -1,9 +1,14 @@
+//! Adaptador `sqlx` del puerto `GradeRepository` (RNF-2): implementa cada
+//! método delegando en `queries.rs`, que es donde viven las consultas `.sql`.
+//! El adaptador solo aporta el `PgPool`; toda la lógica de SQL y su mapeo está
+//! en un único lugar reutilizable por los tests dentro de una transacción.
+
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::domain::Conteos;
-use super::ports::GradeRepository;
+use super::ports::{AlumnoSeccion, AusentesEstudiante, GradeRepository};
+use super::queries;
 
 #[derive(Clone)]
 pub struct PgGradeRepository {
@@ -18,30 +23,30 @@ impl PgGradeRepository {
 
 #[async_trait]
 impl GradeRepository for PgGradeRepository {
-    async fn obtener_conteos(
+    async fn existe_lapso(&self, id_lapse: Uuid) -> Result<bool, sqlx::Error> {
+        queries::existe_lapso(&self.pool, id_lapse).await
+    }
+
+    async fn existe_seccion(&self, id_section: Uuid) -> Result<bool, sqlx::Error> {
+        queries::existe_seccion(&self.pool, id_section).await
+    }
+
+    async fn n_eventos_elegibles(&self, id_lapse: Uuid) -> Result<i64, sqlx::Error> {
+        queries::n_eventos_elegibles(&self.pool, id_lapse).await
+    }
+
+    async fn ausentes_por_estudiante(
         &self,
         id_lapse: Uuid,
-        id_student: Uuid,
-    ) -> Result<Conteos, sqlx::Error> {
-        let row = sqlx::query(
-            "SELECT
-                COALESCE(SUM(CASE WHEN a.state='AUSENTE' AND e.type_event='PRACTICA_REGULAR' THEN 1 ELSE 0 END),0) as ausentes_regular,
-                COALESCE(SUM(CASE WHEN a.state='AUSENTE' AND e.type_event='PRACTICA_EXTRA' THEN 1 ELSE 0 END),0) as ausentes_extra,
-                COALESCE(SUM(CASE WHEN a.state='AUSENTE' AND e.type_event='PRESENTACION' THEN 1 ELSE 0 END),0) as ausentes_presentacion,
-                COUNT(DISTINCT e.id) as total_eventos_elegibles
-             FROM events e
-             LEFT JOIN attendance a ON a.id_event = e.id AND a.id_student = $2
-             WHERE e.id_lapse = $1 AND e.status='SCHEDULED'",
-        )
-        .bind(id_lapse)
-        .bind(id_student)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(Conteos {
-            ausentes_regular: row.get::<i64, _>("ausentes_regular"),
-            ausentes_extra: row.get::<i64, _>("ausentes_extra"),
-            ausentes_presentacion: row.get::<i64, _>("ausentes_presentacion"),
-            total_eventos_elegibles: row.get::<i64, _>("total_eventos_elegibles"),
-        })
+    ) -> Result<Vec<AusentesEstudiante>, sqlx::Error> {
+        queries::ausentes_por_estudiante(&self.pool, id_lapse).await
+    }
+
+    async fn roster(
+        &self,
+        id_lapse: Uuid,
+        id_section: Uuid,
+    ) -> Result<Vec<AlumnoSeccion>, sqlx::Error> {
+        queries::roster(&self.pool, id_lapse, id_section).await
     }
 }

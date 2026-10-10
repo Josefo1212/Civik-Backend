@@ -1,11 +1,12 @@
 # Spec 008 — Notas (cálculo por lapso)
 
-Estado: aprobada
+Estado: implementada
 
-> Reconciliación en curso: la primera implementación calculó la nota sin
-> elegibilidad por fecha, sin respetar el override y con un endpoint por
-> estudiante (no por sección). Se reescribe esta spec y se completa el código
-> en la fase C de la reconciliación. Pasará a `implementada` al cerrar esa fase.
+> Reconciliación cerrada (fase C, 2026-10-10): la primera implementación
+> calculaba la nota sin elegibilidad por fecha, sin respetar el override y con
+> un endpoint por estudiante (no por sección). Se reescribió esta spec y el
+> módulo se completó en hexagonal completo (dominio puro, `GradeRepository`,
+> adaptador, service y endpoint por lapso y sección).
 
 ## Contexto y objetivo
 
