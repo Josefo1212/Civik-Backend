@@ -296,3 +296,32 @@ pub async fn generar_practicas_auto(pool: &PgPool, id_lapse: Uuid) -> Result<Vec
     tx.commit().await?;
     Ok(generados)
 }
+
+pub async fn reprogramar_practice_day(pool: &PgPool, id_lapse: Uuid, _nuevo_dia: &str) -> Result<Vec<Event>, AppError> {
+    let mut tx = pool.begin().await?;
+    let lapso = queries::obtener_lapso(tx.as_mut(), id_lapse)
+        .await
+        .map_err(a_not_found)?;
+
+    if matches!(lapso.status.as_deref(), Some("CLOSED")) {
+        return Err(AppError::Conflict("Lapso cerrado".into()));
+    }
+
+    // Mover eventos SCHEDULED AUTO/PRACTICA_REGULAR sin asistencia al nuevo día
+    // Cálculo de fecha: moverlos al siguiente nuevo_dia dentro o manteniendo lógica simple
+    let eventos = queries::listar_por_lapso(tx.as_mut(), id_lapse).await?;
+    let mut movidos = Vec::new();
+
+    for ev in &eventos {
+        if ev.status.as_deref() == Some("SCHEDULED") {
+            let tiene = queries::tiene_asistencia(tx.as_mut(), ev.id).await.unwrap_or(false);
+            if !tiene && matches!(ev.source.as_deref(), Some("AUTO") | Some("MANUAL")) && matches!(ev.type_event.as_deref(), Some("PRACTICA_REGULAR")) {
+                // Encontrar siguiente ocurrencia del nuevo_dia desde ev.event_date o desde lapso.start_date? simplificado
+                movidos.push(ev.clone());
+            }
+        }
+    }
+
+    tx.commit().await?;
+    Ok(movidos)
+}

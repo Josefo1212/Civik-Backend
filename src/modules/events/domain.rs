@@ -230,3 +230,21 @@ pub fn puede_generar_auto(lapso_status: Option<&str>, _has_events: bool) -> bool
         _ => true,
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum ErrorReprogramacion {
+    #[error("No se puede reprogramar: tiene asistencia registrada")]
+    ConAsistencia,
+    #[error("El evento es cancelado o no editable para reprogramación")]
+    NoReprogramable,
+}
+
+/// Indica si un evento AUTO/PRACTICA_REGULAR puede moverse (versión simplificada)
+pub fn puede_reprogramarse_evento(estado: Option<&str>, source: Option<&str>, tiene_asistencia: bool) -> bool {
+    if tiene_asistencia {
+        return false;
+    }
+    let estado_ok = matches!(estado, Some("SCHEDULED") | None);
+    let source_ok = matches!(source, Some("AUTO") | Some("MANUAL"));
+    estado_ok && source_ok
+}
