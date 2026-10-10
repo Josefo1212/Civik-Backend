@@ -143,3 +143,24 @@ where
         .fetch_one(executor)
         .await
 }
+
+pub async fn crear_auto<'e, E>(
+    executor: E,
+    id_lapse: Uuid,
+    event_date: NaiveDate,
+    event_name: &str,
+) -> sqlx::Result<Event>
+where
+    E: PgExecutor<'e>,
+{
+    sqlx::query_file_as!(
+        Event,
+        "src/modules/events/queries/create_auto.sql",
+        id_lapse,
+        event_date,
+        "PRACTICA_REGULAR",
+        event_name
+    )
+    .fetch_one(executor)
+    .await
+}

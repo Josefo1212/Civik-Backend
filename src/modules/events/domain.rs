@@ -207,3 +207,26 @@ pub fn puede_editarse(
 pub fn es_practica_regular_manual(type_event: TipoEvento, source_es_manual: bool) -> bool {
     matches!(type_event, TipoEvento::PracticaRegular) && source_es_manual
 }
+
+#[derive(Debug, Clone)]
+pub struct DatosGenerarAuto {
+    pub fechas: Vec<chrono::NaiveDate>,
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ErrorGeneracion {
+    #[error("El lapso está cerrado o no permite generación")]
+    LapsoNoGenerable,
+    #[error("No hay fechas de práctica válidas")]
+    SinFechasValidas,
+}
+
+/// Determina si se puede generar prácticas automáticas para el lapso
+pub fn puede_generar_auto(lapso_status: Option<&str>, _has_events: bool) -> bool {
+    // Generar si está OPEN o PLANEADO (no CLOSED). No duplicar innecesariamente - lógica en service.
+    match lapso_status {
+        Some("CLOSED") => false,
+        Some("OPEN") | Some("PLANEADO") | None => true,
+        _ => true,
+    }
+}

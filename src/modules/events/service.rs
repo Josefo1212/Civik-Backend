@@ -2,7 +2,7 @@
 
 use crate::modules::events::domain::{
     self, es_practica_regular_manual, preparar_creacion_manual, preparar_edicion_manual,
-    puede_cancelarse, puede_editarse, DatosCrearManual, DatosEditarManual, EstadoEvento,
+    puede_cancelarse, puede_editarse, puede_generar_auto, DatosCrearManual, DatosEditarManual, EstadoEvento,
 };
 use crate::modules::events::queries::{self, Event};
 use crate::shared::audit::write_audit_log as write_audit;
@@ -243,4 +243,56 @@ pub async fn listar(pool: &PgPool, lapse_id: Option<Uuid>) -> Result<Vec<Event>,
         Some(lid) => Ok(queries::listar_por_lapso(pool, lid).await?),
         None => Ok(queries::listar_all(pool).await?),
     }
+}
+
+pub async fn generar_practicas_auto(pool: &PgPool, id_lapse: Uuid) -> Result<Vec<Event>, AppError> {
+    let mut tx = pool.begin().await?;
+    let lapso = queries::obtener_lapso(tx.as_mut(), id_lapse)
+        .await
+        .map_err(a_not_found)?;
+
+    if !puede_generar_auto(lapso.status.as_deref(), false) {
+        return Err(AppError::Conflict("No se puede generar prácticas para este lapso".into()));
+    }
+
+    // Obtener eventos existentes del lapso para evitar duplicados
+    let eventos_existentes = queries::listar_por_lapso(tx.as_mut(), id_lapse).await?;
+
+    // Generar fechas de práctica - aproximado básico
+    let mut generados = Vec::new();
+    let mut fecha = lapso.start_date;
+    while fecha <= lapso.end_date {
+        let es_dia_practica = match lapso.practice_day.as_deref().unwrap_or("MONDAY") {
+            "MONDAY" => fecha.weekday() == chrono::Weekday::Mon,
+            "TUESDAY" => fecha.weekday() == chrono::Weekday::Tue,
+            "WEDNESDAY" => fecha.weekday() == chrono::Weekday::Wed,
+            "THURSDAY" => fecha.weekday() == chrono::Weekday::Thu,
+            "FRIDAY" => fecha.weekday() == chrono::Weekday::Fri,
+            "SATURDAY" => fecha.weekday() == chrono::Weekday::Sat,
+            "SUNDAY" => fecha.weekday() == chrono::Weekday::Sun,
+            _ => fecha.weekday() == chrono::Weekday::Mon,
+        };
+        if es_dia_practica {
+            // Verificar si ya existe
+            let ya_existe = eventos_existentes
+                .iter()
+                .any(|e| e.event_date == fecha && e.source.as_deref() == Some("AUTO"));
+            if !ya_existe {
+                let ev = queries::crear_auto(tx.as_mut(), id_lapse, fecha, "Práctica").await?;
+                write_audit(
+                    tx.as_mut(),
+                    "events",
+                    ev.id,
+                    "generar_auto",
+                    Some(&json!({ "fecha": fecha.to_string() })),
+                )
+                .await?;
+                generados.push(ev);
+            }
+        }
+        fecha = fecha.succ_opt().unwrap_or(fecha);
+    }
+
+    tx.commit().await?;
+    Ok(generados)
 }
