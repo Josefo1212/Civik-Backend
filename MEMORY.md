@@ -84,8 +84,10 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `/events/{id}/attendance/{student}`, defensa BD de reglas 4/7/10.
   **Fase 8 (`grades`) reconciliada y cerrada (Fase C)**: hexagonal completo,
   elegibilidad por fecha/lapso, override respeta dos decimales, endpoint por
-  lapso y sección. **Fase 9** (offline) solo T0/T1. **Suite completa: 298
-  tests, clippy 0/0.**
+  lapso y sección. **Fase 9 (`offline`) implementada y cerrada (T0–T6)**:
+  `POST /events/{id_event}/attendance/sync`, `decidir_sincronizacion` pura,
+  tolerancia de 5 min, reintentos idempotentes y conflictos por ítem en `200`.
+  **Suite completa: 312 tests, clippy 0/0.**
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -197,12 +199,9 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 
 ## Próximos pasos
 
-- **Fase 9 — Sincronización offline** (spec 009): hoy solo está el
-  reconocimiento del soporte (`updated_at` ya en `attendance`) y los tests
-  base (idempotencia + corrección + HTTP). Falta el protocolo en sí:
-  detección de conflicto por `updated_at`, tolerancia de reloj y el
-  contrato idempotente de red; ampliar `specs/009-offline/{spec,plan,tasks}.md`
-  antes de tocar código.
+- **Fase 9 — Sincronización offline** (spec 009): **implementada y cerrada**.
+  Dominio puro de conflicto, `sincronizar`/`sincronizar_en_tx`, ruta
+  `POST /events/{id_event}/attendance/sync`, tests tx/rollback y HTTP.
 - **Fase 10 — Endurecer tests**: portar los 76 casos de
   `verify-constraints.sql` a tests de integración (patrón tx/rollback).
 - **Fase 11 — Deploy**: Dockerfile + `compose.yaml`, al final.
@@ -364,3 +363,18 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   con campos nombrados (`fila.campo`, no `.get`); agregados inferidos
   `Option`; `Decimal::rescale` muta en el lugar. **298 tests, clippy 0/0.** Fase
   C cerrada.
+- **Fase 9 — `offline` implementada (2026-10-10)** — T0–T6. Spec 009 ampliada a
+  SDD completo y cerrada la clarificación: tolerancia de reloj **5 min**
+  (constante), aplicar no-conflictivos en **una** transacción y devolver
+  conflictos por ítem en **`200`**, ruta **`POST /events/{id_event}/attendance/
+  sync`**, y `updated_at` siempre del servidor. `domain.rs`:
+  `TOLERANCIA_RELOJ`, `VersionActual`, `DecisionSincronizacion` y
+  `decidir_sincronizacion` (pura; la igualdad de estado gana sobre el reloj).
+  `service.rs`: `LoteSync`/`ItemSync`/`ItemResultado`, `sincronizar` (abre tx) y
+  `sincronizar_en_tx` (núcleo probado dentro de la tx del test; igual que
+  `queries.rs` en grades, ver los datos sin commitear). `CANCELLED`/`CLOSED`
+  rechazan el lote entero (409); la baja solo impide **crear**, no corrigir.
+  Se auditó con contadores y **solo si hubo escrituras** (idempotencia). Tests:
+  `offline.rs` (6, tx/rollback, años 2010–2015) y `http_offline.rs` (1, año
+  2016/`WOf1`). Hallazgo: `lapses_queries::cerrar` exige pasar por `ACTIVE`
+  (si no, no-op silencioso). **312 tests, clippy 0/0.** Fase 9 cerrada.

@@ -21,6 +21,8 @@ use std::fmt;
 use thiserror::Error;
 use uuid::Uuid;
 
+use chrono::{DateTime, Duration, Utc};
+
 /// Identificador de un evento (`events.id`), como newtype.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EventId(pub Uuid);
@@ -151,6 +153,65 @@ pub fn puede_escribir_asistencia(
     Ok(())
 }
 
+/// Ventana que absorbe el desfase entre el reloj del cliente (`cambio_en`) y
+/// el del servidor (`updated_at`) antes de hablar de conflicto (RF-5). Cinco
+/// minutos: cubre un desfase de reloj de dispositivo sin enmascarar un cambio
+/// real hecho más tarde. Constante, no configurable, por decisión de la spec.
+pub const TOLERANCIA_RELOJ: Duration = Duration::minutes(5);
+
+/// La versión que el servidor tiene de una fila, en la forma mínima que la
+/// decisión de sincronización necesita. `state` es texto (la columna se lee con
+/// `state::text`) y `updated_at` es el instante que puso el servidor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VersionActual<'a> {
+    pub state: Option<&'a str>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Qué hacer con un ítem de sincronización (RF-1 a RF-5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecisionSincronizacion {
+    /// No hay fila: se crea.
+    Crear,
+    /// El estado pedido ya es el actual: reintento idempotente, no se escribe.
+    SinCambio,
+    /// Hay fila con otro estado, pero el cambio del cliente está dentro de la
+    /// tolerancia: se aplica (gana el cliente).
+    Aplicar,
+    /// Hay fila con otro estado y el servidor va más adelante que el cliente:
+    /// no se pisa, se reporta conflicto.
+    Conflicto,
+}
+
+/// Decide qué hacer con un ítem de sincronización (RF-1 a RF-5). Pura: sin
+/// `sqlx`, sin `async`, sin reloj propio (recibe `cambio_en` y el `updated_at`
+/// del servidor como datos).
+///
+/// El orden importa: primero la igualdad de estado (un reintento con el mismo
+/// estado nunca es conflicto, aunque el reloj diga otra cosa), después el
+/// reloj. Un ítem sin `cambio_en` sobre una fila con otro estado es conflicto:
+/// no hay con qué demostrar que el cambio es reciente.
+pub fn decidir_sincronizacion(
+    pedido: &str,
+    actual: Option<VersionActual<'_>>,
+    cambio_en: Option<DateTime<Utc>>,
+) -> DecisionSincronizacion {
+    let Some(version) = actual else {
+        return DecisionSincronizacion::Crear;
+    };
+
+    if version.state == Some(pedido) {
+        return DecisionSincronizacion::SinCambio;
+    }
+
+    match cambio_en {
+        Some(instante) if instante >= version.updated_at - TOLERANCIA_RELOJ => {
+            DecisionSincronizacion::Aplicar
+        }
+        _ => DecisionSincronizacion::Conflicto,
+    }
+}
+
 // Los tests de unidad pueden usar `unwrap()`: el `deny` de `lib.rs` protege
 // el código de producción, y en un assert un panic es el fallo esperado.
 #[cfg(test)]
@@ -272,5 +333,80 @@ mod tests {
         assert_eq!(StudentId::from(id).0, id);
         assert_eq!(Uuid::from(EventId(id)), id);
         assert_eq!(Uuid::from(StudentId(id)), id);
+    }
+
+    // --- Decisión de sincronización (RF-1..RF-5) ---
+
+    fn version<'a>(state: Option<&'a str>, updated_at: DateTime<Utc>) -> Option<VersionActual<'a>> {
+        Some(VersionActual { state, updated_at })
+    }
+
+    #[test]
+    fn sin_fila_la_decision_es_crear() {
+        // Aunque venga con reloj, no hay fila: se crea.
+        assert_eq!(
+            decidir_sincronizacion("AUSENTE", None, Some(Utc::now())),
+            DecisionSincronizacion::Crear
+        );
+    }
+
+    #[test]
+    fn el_mismo_estado_es_sin_cambio_aunque_el_reloj_sea_viejo() {
+        // Reintento: la igualdad de estado gana sobre el reloj.
+        let servidor = Utc::now();
+        let viejo = servidor - Duration::hours(3);
+        assert_eq!(
+            decidir_sincronizacion("PRESENTE", version(Some("PRESENTE"), servidor), Some(viejo)),
+            DecisionSincronizacion::SinCambio
+        );
+    }
+
+    #[test]
+    fn dentro_de_la_tolerancia_se_aplica() {
+        let servidor = Utc::now();
+        let cambio = servidor - Duration::minutes(1);
+        assert_eq!(
+            decidir_sincronizacion("AUSENTE", version(Some("PRESENTE"), servidor), Some(cambio)),
+            DecisionSincronizacion::Aplicar
+        );
+    }
+
+    #[test]
+    fn justo_en_el_borde_de_la_tolerancia_se_aplica() {
+        let servidor = Utc::now();
+        let cambio = servidor - TOLERANCIA_RELOJ;
+        assert_eq!(
+            decidir_sincronizacion("AUSENTE", version(Some("PRESENTE"), servidor), Some(cambio)),
+            DecisionSincronizacion::Aplicar
+        );
+    }
+
+    #[test]
+    fn fuera_de_la_tolerancia_es_conflicto() {
+        let servidor = Utc::now();
+        let cambio = servidor - TOLERANCIA_RELOJ - Duration::seconds(1);
+        assert_eq!(
+            decidir_sincronizacion("AUSENTE", version(Some("PRESENTE"), servidor), Some(cambio)),
+            DecisionSincronizacion::Conflicto
+        );
+    }
+
+    #[test]
+    fn sin_cambio_en_sobre_estado_distinto_es_conflicto() {
+        let servidor = Utc::now();
+        assert_eq!(
+            decidir_sincronizacion("AUSENTE", version(Some("PRESENTE"), servidor), None),
+            DecisionSincronizacion::Conflicto
+        );
+    }
+
+    #[test]
+    fn un_cambio_mas_nuevo_que_el_servidor_se_aplica() {
+        let servidor = Utc::now();
+        let cambio = servidor + Duration::minutes(2);
+        assert_eq!(
+            decidir_sincronizacion("AUSENTE", version(Some("PRESENTE"), servidor), Some(cambio)),
+            DecisionSincronizacion::Aplicar
+        );
     }
 }

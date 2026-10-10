@@ -2,8 +2,9 @@
 //! aplica las reglas puras de `domain` y escribe la auditoría. La secuencia es
 //! de negocio; las invariantes duras siguen en los triggers de la base.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use chrono::{DateTime, Utc};
 use serde_json::json;
 use sqlx::{PgPool, PgTransaction};
 use uuid::Uuid;
@@ -14,7 +15,8 @@ use crate::shared::audit::write_audit_log_tx;
 use crate::shared::error::{mapear_violacion, AppError};
 
 use super::domain::{
-    puede_escribir_asistencia, validar_state, ErrorAsistencia, EventId, StudentId,
+    decidir_sincronizacion, puede_escribir_asistencia, validar_state, DecisionSincronizacion,
+    ErrorAsistencia, EventId, StudentId, VersionActual,
 };
 use super::queries::{self, Attendance, FilaPadron};
 
@@ -215,4 +217,170 @@ pub async fn corregir_asistencia(
 
     tx.commit().await?;
     Ok(actualizado)
+}
+
+/// El cuerpo de una sincronización offline (RF-1): los cambios que el cliente
+/// hizo sin conexión.
+#[derive(serde::Deserialize, Debug)]
+pub struct LoteSync {
+    pub items: Vec<ItemSync>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct ItemSync {
+    pub id_student: Uuid,
+    pub state: String,
+    /// Instante del cambio según el reloj del cliente (RFC 3339). Opcional:
+    /// un ítem nuevo no lo necesita.
+    pub cambio_en: Option<DateTime<Utc>>,
+}
+
+/// El resultado de un ítem de sincronización (RF-6, RF-9): qué se hizo y, en
+/// todos los casos, el estado y el `updated_at` vigentes en el servidor.
+#[derive(serde::Serialize, Debug)]
+pub struct ItemResultado {
+    pub id_student: Uuid,
+    pub resultado: &'static str,
+    pub state: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Sincroniza un lote de cambios offline (RF-1 a RF-10).
+///
+/// Todo lo **aplicable** se escribe en una sola transacción: crear, aplicar
+/// dentro de la tolerancia y los reintentos idempotentes. Un conflicto no
+/// aborta el lote: se reporta con el estado del servidor y el resto se guarda
+/// (decisión de clarificación). Un evento cancelado o un lapso cerrado sí
+/// rechazan el lote entero antes de escribir, igual que la Fase 7.
+pub async fn sincronizar(
+    pool: &PgPool,
+    id_event: EventId,
+    lote: LoteSync,
+) -> Result<Vec<ItemResultado>, AppError> {
+    let mut tx = pool.begin().await?;
+    let resultados = sincronizar_en_tx(&mut tx, id_event, lote).await?;
+    tx.commit().await?;
+    Ok(resultados)
+}
+
+/// El núcleo de `sincronizar`, sin abrir transacción: se prueba dentro de la
+/// transacción descartable del test, que es la única forma de ver los datos que
+/// todavía no se confirmaron.
+pub async fn sincronizar_en_tx(
+    tx: &mut PgTransaction<'_>,
+    id_event: EventId,
+    lote: LoteSync,
+) -> Result<Vec<ItemResultado>, AppError> {
+    let (estado_evento, estado_lapso) = cargar_estados(tx, id_event).await?;
+    puede_escribir_asistencia(estado_evento.as_deref(), estado_lapso.as_deref())
+        .map_err(desde_dominio)?;
+
+    for item in &lote.items {
+        validar_state(&item.state).map_err(desde_dominio)?;
+    }
+
+    let actuales: HashMap<Uuid, Attendance> = queries::rows_by_event(tx.as_mut(), id_event)
+        .await
+        .map_err(map_sqlx_err)?
+        .into_iter()
+        .map(|fila| (fila.id_student, fila))
+        .collect();
+
+    // Decide cada ítem con la regla pura, antes de tocar la base (RNF-1).
+    let decisiones: Vec<(StudentId, String, DecisionSincronizacion)> = lote
+        .items
+        .iter()
+        .map(|item| {
+            let actual = actuales.get(&item.id_student).map(|fila| VersionActual {
+                state: fila.state.as_deref(),
+                updated_at: fila.updated_at,
+            });
+            let decision = decidir_sincronizacion(&item.state, actual, item.cambio_en);
+            (StudentId(item.id_student), item.state.clone(), decision)
+        })
+        .collect();
+
+    // Solo una creación necesita verificar al estudiante: si ya hay fila, el
+    // estudiante existe (la FK) y la baja no impide corregirlo (RF-7).
+    for (id_student, _, decision) in &decisiones {
+        if *decision == DecisionSincronizacion::Crear {
+            let estudiante = students_queries::consultar(tx.as_mut(), id_student.0)
+                .await
+                .map_err(|_| AppError::NotFound("No se encontró el estudiante".into()))?;
+            if !estudiante.active {
+                return Err(desde_dominio(ErrorAsistencia::EstudianteInactivo));
+            }
+        }
+    }
+
+    let mut creados = 0usize;
+    let mut aplicados = 0usize;
+    let mut sin_cambio = 0usize;
+    let mut conflictos = 0usize;
+    let mut resultados = Vec::with_capacity(decisiones.len());
+
+    for (id_student, pedido, decision) in &decisiones {
+        let (resultado, fila) = match decision {
+            DecisionSincronizacion::Crear => {
+                let fila = queries::upsert(tx.as_mut(), id_event, *id_student, pedido.as_str())
+                    .await
+                    .map_err(map_sqlx_err)?;
+                creados += 1;
+                ("creado", fila)
+            }
+            DecisionSincronizacion::Aplicar => {
+                let fila = queries::set_state(tx.as_mut(), id_event, *id_student, pedido.as_str())
+                    .await
+                    .map_err(map_sqlx_err)?;
+                aplicados += 1;
+                ("aplicado", fila)
+            }
+            DecisionSincronizacion::SinCambio | DecisionSincronizacion::Conflicto => {
+                let es_conflicto = *decision == DecisionSincronizacion::Conflicto;
+                if es_conflicto {
+                    conflictos += 1;
+                } else {
+                    sin_cambio += 1;
+                }
+                let fila = actuales
+                    .get(&id_student.0)
+                    .cloned()
+                    .ok_or_else(|| AppError::NotFound("No se encontró la asistencia".into()))?;
+                (
+                    if es_conflicto {
+                        "conflicto"
+                    } else {
+                        "sin_cambio"
+                    },
+                    fila,
+                )
+            }
+        };
+
+        resultados.push(ItemResultado {
+            id_student: id_student.0,
+            resultado,
+            state: fila.state,
+            updated_at: fila.updated_at,
+        });
+    }
+
+    if creados + aplicados > 0 {
+        let payload = json!({
+            "creados": creados,
+            "aplicados": aplicados,
+            "sin_cambio": sin_cambio,
+            "conflictos": conflictos,
+        });
+        write_audit_log_tx(
+            tx,
+            "attendance",
+            id_event.0,
+            "sincronizar_asistencia",
+            Some(&payload),
+        )
+        .await?;
+    }
+
+    Ok(resultados)
 }

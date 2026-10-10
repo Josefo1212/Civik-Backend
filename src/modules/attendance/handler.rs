@@ -13,7 +13,7 @@ use crate::shared::error::AppError;
 
 use super::domain::{EventId, StudentId};
 use super::queries::{Attendance, FilaPadron};
-use super::service::{self, RegistroLote};
+use super::service::{self, ItemResultado, LoteSync, RegistroLote};
 
 #[derive(Deserialize)]
 pub struct PatchBody {
@@ -27,6 +27,7 @@ pub fn router() -> Router<sqlx::PgPool> {
             "/events/{id_event}/attendance/{id_student}",
             patch(corregir),
         )
+        .route("/events/{id_event}/attendance/sync", post(sincronizar))
 }
 
 /// RF-1: registra el lote y devuelve `200` con el padrón actualizado.
@@ -58,4 +59,15 @@ async fn corregir(
         service::corregir_asistencia(&pool, EventId(id_event), StudentId(id_student), &body.state)
             .await?;
     Ok((StatusCode::OK, Json(fila)))
+}
+
+/// RF-10: sincroniza un lote de cambios offline y devuelve el resultado por
+/// ítem. El conflicto no es un error: viaja dentro del `200`.
+async fn sincronizar(
+    State(pool): State<sqlx::PgPool>,
+    Path(id_event): Path<Uuid>,
+    Json(lote): Json<LoteSync>,
+) -> Result<(StatusCode, Json<Vec<ItemResultado>>), AppError> {
+    let resultados = service::sincronizar(&pool, EventId(id_event), lote).await?;
+    Ok((StatusCode::OK, Json(resultados)))
 }
