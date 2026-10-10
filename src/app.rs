@@ -12,6 +12,7 @@ use crate::modules::sections::handler as sections_handler;
 use crate::modules::lapses::handler as lapses;
 use crate::modules::attendance::handler as attendance_handler;
 use crate::modules::students::handler as estudiantes;
+use crate::modules::grades::handler as grades_handler;
 
 pub fn build_router(pool: PgPool) -> Router {
     Router::new()
@@ -53,6 +54,7 @@ pub fn build_router(pool: PgPool) -> Router {
         .route("/events/{id}", get(events::consultar).patch(events::editar))
         .route("/events/{id}/cancel", post(events::cancelar))
         .merge(attendance_handler::router())
+        .merge(grades_handler::router())
         .with_state(pool)
 }
 

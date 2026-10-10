@@ -16,6 +16,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.18", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1.38", features = ["serde"] }
+async-trait = "0.1.92"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
