@@ -103,13 +103,9 @@ pub async fn get_by_id<'e, E>(executor: E, id: Uuid) -> sqlx::Result<Lapso>
 where
     E: PgExecutor<'e>,
 {
-    let fila = sqlx::query_file_as!(
-        FilaLapso,
-        "src/modules/lapses/queries/get_by_id.sql",
-        id,
-    )
-    .fetch_optional(executor)
-    .await?;
+    let fila = sqlx::query_file_as!(FilaLapso, "src/modules/lapses/queries/get_by_id.sql", id,)
+        .fetch_optional(executor)
+        .await?;
 
     let Some(fila) = fila else {
         return Err(sqlx::Error::RowNotFound);

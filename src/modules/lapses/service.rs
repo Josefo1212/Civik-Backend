@@ -108,11 +108,7 @@ pub async fn crear(pool: &PgPool, entrada: &EntradaLapso) -> Result<Lapso, AppEr
 /// son las mismas del alta porque la edición usa el mismo `preparar_entrada`
 /// (RF-8) y las mismas restricciones de la base (RF-10), solo que con el
 /// estado del lapso re-validado primero.
-pub async fn editar(
-    pool: &PgPool,
-    id: Uuid,
-    entrada: &EntradaLapso,
-) -> Result<Lapso, AppError> {
+pub async fn editar(pool: &PgPool, id: Uuid, entrada: &EntradaLapso) -> Result<Lapso, AppError> {
     let datos = preparar_entrada(
         &entrada.school_year,
         &entrada.lapse_number,
@@ -124,20 +120,25 @@ pub async fn editar(
 
     let mut tx = pool.begin().await?;
 
-    let lapso = queries::get_by_id(tx.as_mut(), id).await.map_err(a_not_found)?;
+    let lapso = queries::get_by_id(tx.as_mut(), id)
+        .await
+        .map_err(a_not_found)?;
     let estado = estado_de(&lapso)?;
     validar_transicion(&estado, Operacion::Editar).map_err(dominio_a_conflict)?;
 
     // RF-11: el trigger de la base lo rechaza con 23514; el service lo
     // anticipa para responder el 409 con un mensaje que nombra el problema.
-    if queries::eventos_fuera_del_rango(tx.as_mut(), id, datos.start_date, datos.end_date).await? > 0
+    if queries::eventos_fuera_del_rango(tx.as_mut(), id, datos.start_date, datos.end_date).await?
+        > 0
     {
         return Err(AppError::Conflict(
             "No se puede editar: las fechas nuevas dejarían eventos fuera del lapso".to_string(),
         ));
     }
 
-    let actualizado = queries::editar(&mut tx, id, datos).await.map_err(a_not_found)?;
+    let actualizado = queries::editar(&mut tx, id, datos)
+        .await
+        .map_err(a_not_found)?;
     tx.commit().await?;
 
     Ok(actualizado)
@@ -150,7 +151,9 @@ pub async fn editar(
 pub async fn activar(pool: &PgPool, id: Uuid) -> Result<Lapso, AppError> {
     let mut tx = pool.begin().await?;
 
-    let lapso = queries::get_by_id(tx.as_mut(), id).await.map_err(a_not_found)?;
+    let lapso = queries::get_by_id(tx.as_mut(), id)
+        .await
+        .map_err(a_not_found)?;
     let estado = estado_de(&lapso)?;
     validar_transicion(&estado, Operacion::Activar).map_err(dominio_a_conflict)?;
 
@@ -168,7 +171,9 @@ pub async fn activar(pool: &PgPool, id: Uuid) -> Result<Lapso, AppError> {
 pub async fn cerrar(pool: &PgPool, id: Uuid) -> Result<Lapso, AppError> {
     let mut tx = pool.begin().await?;
 
-    let lapso = queries::get_by_id(tx.as_mut(), id).await.map_err(a_not_found)?;
+    let lapso = queries::get_by_id(tx.as_mut(), id)
+        .await
+        .map_err(a_not_found)?;
     let estado = estado_de(&lapso)?;
     validar_transicion(&estado, Operacion::Cerrar).map_err(dominio_a_conflict)?;
 
@@ -196,7 +201,9 @@ pub async fn cerrar(pool: &PgPool, id: Uuid) -> Result<Lapso, AppError> {
 pub async fn eliminar(pool: &PgPool, id: Uuid) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
 
-    let lapso = queries::get_by_id(tx.as_mut(), id).await.map_err(a_not_found)?;
+    let lapso = queries::get_by_id(tx.as_mut(), id)
+        .await
+        .map_err(a_not_found)?;
     let estado = estado_de(&lapso)?;
     validar_transicion(&estado, Operacion::Eliminar).map_err(dominio_a_conflict)?;
     validar_borrado_permitido(lapso.end_date, Utc::now().date_naive())

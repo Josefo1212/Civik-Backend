@@ -52,9 +52,13 @@ pub async fn listar_por_lapso<'e, E>(executor: E, id_lapse: Uuid) -> sqlx::Resul
 where
     E: PgExecutor<'e>,
 {
-    sqlx::query_file_as!(Event, "src/modules/events/queries/list_by_lapse.sql", id_lapse)
-        .fetch_all(executor)
-        .await
+    sqlx::query_file_as!(
+        Event,
+        "src/modules/events/queries/list_by_lapse.sql",
+        id_lapse
+    )
+    .fetch_all(executor)
+    .await
 }
 
 pub async fn crear_manual<'e, E>(
@@ -83,14 +87,9 @@ pub async fn cancelar<'e, E>(executor: E, id: Uuid, motivo: &str) -> sqlx::Resul
 where
     E: PgExecutor<'e>,
 {
-    let fila = sqlx::query_file_as!(
-        Event,
-        "src/modules/events/queries/cancel.sql",
-        id,
-        motivo
-    )
-    .fetch_optional(executor)
-    .await?;
+    let fila = sqlx::query_file_as!(Event, "src/modules/events/queries/cancel.sql", id, motivo)
+        .fetch_optional(executor)
+        .await?;
 
     let Some(evento) = fila else {
         return Err(sqlx::Error::RowNotFound);
@@ -139,9 +138,13 @@ pub async fn obtener_lapso<'e, E>(executor: E, id_lapse: Uuid) -> sqlx::Result<L
 where
     E: PgExecutor<'e>,
 {
-    sqlx::query_file_as!(LapseLite, "src/modules/events/queries/get_lapse.sql", id_lapse)
-        .fetch_one(executor)
-        .await
+    sqlx::query_file_as!(
+        LapseLite,
+        "src/modules/events/queries/get_lapse.sql",
+        id_lapse
+    )
+    .fetch_one(executor)
+    .await
 }
 
 pub async fn crear_auto<'e, E>(
@@ -158,9 +161,56 @@ where
         "src/modules/events/queries/create_auto.sql",
         id_lapse,
         event_date,
-        "PRACTICA_REGULAR",
         event_name
     )
     .fetch_one(executor)
     .await
+}
+
+/// Cambia el día de práctica de un lapso (RF-16). El trigger
+/// `trg_lapses_closed_frozen` queda como defensa contra un lapso `CLOSED`.
+pub async fn set_practice_day<'e, E>(executor: E, id: Uuid, dia: &str) -> sqlx::Result<LapseLite>
+where
+    E: PgExecutor<'e>,
+{
+    let fila = sqlx::query_file_as!(
+        LapseLite,
+        "src/modules/events/queries/set_practice_day.sql",
+        id,
+        dia
+    )
+    .fetch_optional(executor)
+    .await?;
+
+    let Some(fila) = fila else {
+        return Err(sqlx::Error::RowNotFound);
+    };
+    Ok(fila)
+}
+
+/// Mueve la fecha de un evento (RF-16). El trigger de la regla 1
+/// (`check_event_date_within_lapse`) valida el nuevo día contra el
+/// `practice_day` del lapso, y el índice único `uq_events_auto_one_per_day`
+/// queda como defensa contra una colisión entre AUTO.
+pub async fn mover_fecha_evento<'e, E>(
+    executor: E,
+    id: Uuid,
+    nueva_fecha: NaiveDate,
+) -> sqlx::Result<Event>
+where
+    E: PgExecutor<'e>,
+{
+    let fila = sqlx::query_file_as!(
+        Event,
+        "src/modules/events/queries/mover_fecha_evento.sql",
+        id,
+        nueva_fecha
+    )
+    .fetch_optional(executor)
+    .await?;
+
+    let Some(evento) = fila else {
+        return Err(sqlx::Error::RowNotFound);
+    };
+    Ok(evento)
 }

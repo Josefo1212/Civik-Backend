@@ -146,15 +146,17 @@ async fn el_alta_solapada_falla() -> Resultado {
 
     // Solape parcial con el anterior, dentro del mismo año y del mismo test.
     // El EXCLUDE `daterange '[]' WITH &&` lo detecta.
-    let resultado =
-        crear(&mut tx, entrada("2028", "2", "2028-03-01", "2028-03-31")?).await;
+    let resultado = crear(&mut tx, entrada("2028", "2", "2028-03-01", "2028-03-31")?).await;
 
     let Err(error) = resultado else {
         panic!("un lapso que solapa a otro debe fallar (RF-4)");
     };
 
     let (codigo, restriccion) = codigo_de(&error);
-    assert_eq!(codigo, "23P01", "el EXCLUDE emite exclusion_violation, no 23505");
+    assert_eq!(
+        codigo, "23P01",
+        "el EXCLUDE emite exclusion_violation, no 23505"
+    );
     assert_eq!(restriccion.as_deref(), Some("lapses_no_overlap"));
 
     tx.rollback().await?;
@@ -171,10 +173,26 @@ async fn listar_ordena_por_anio_descendente_y_numero_ascendente() -> Resultado {
     // Se crean desordenadas a propósito: solo el ORDER BY puede estabilizarlas.
     // Los rangos no se solapan entre sí (EXCLUDE) y quedan en 2024/2025, lejos
     // de los años que usan los demás tests.
-    let _l2024_n1 = crear(&mut tx, preparar_entrada("2024", "1", "2024-01-08", "2024-04-12", "MONDAY")?).await?;
-    let _l2025_n2 = crear(&mut tx, preparar_entrada("2025", "2", "2025-08-01", "2025-11-14", "TUESDAY")?).await?;
-    let _l2025_n1 = crear(&mut tx, preparar_entrada("2025", "1", "2025-01-13", "2025-04-30", "WEDNESDAY")?).await?;
-    let _l2024_n3 = crear(&mut tx, preparar_entrada("2024", "3", "2024-05-06", "2024-07-19", "THURSDAY")?).await?;
+    let _l2024_n1 = crear(
+        &mut tx,
+        preparar_entrada("2024", "1", "2024-01-08", "2024-04-12", "MONDAY")?,
+    )
+    .await?;
+    let _l2025_n2 = crear(
+        &mut tx,
+        preparar_entrada("2025", "2", "2025-08-01", "2025-11-14", "TUESDAY")?,
+    )
+    .await?;
+    let _l2025_n1 = crear(
+        &mut tx,
+        preparar_entrada("2025", "1", "2025-01-13", "2025-04-30", "WEDNESDAY")?,
+    )
+    .await?;
+    let _l2024_n3 = crear(
+        &mut tx,
+        preparar_entrada("2024", "3", "2024-05-06", "2024-07-19", "THURSDAY")?,
+    )
+    .await?;
 
     let lista: Vec<Lapso> = listar(&mut *tx).await?;
 
@@ -205,7 +223,10 @@ async fn consultar_devuelve_el_lapso_con_su_estado() -> Resultado {
     let lapso = crear(&mut tx, entrada("2029", "2", "2029-01-08", "2029-03-29")?).await?;
 
     let consultada = get_by_id(&mut *tx, lapso.id).await?;
-    assert_eq!(consultada.id, lapso.id, "RF-6: se consulta por identificador");
+    assert_eq!(
+        consultada.id, lapso.id,
+        "RF-6: se consulta por identificador"
+    );
     assert_eq!(consultada.status, "PLANNED");
     assert_eq!(consultada.practice_day, "THURSDAY");
     assert_eq!(consultada.start_date.to_string(), "2029-01-08");
@@ -251,14 +272,16 @@ async fn la_edicion_valida_igual_que_el_alta_y_no_toca_el_estado() -> Resultado 
     assert_eq!(editada.school_year, 2040);
     assert_eq!(editada.lapse_number, 2);
     assert_eq!(editada.practice_day, "FRIDAY");
-    assert_eq!(editada.status, "PLANNED", "RF-8: una edición estructural no cambia el estado");
+    assert_eq!(
+        editada.status, "PLANNED",
+        "RF-8: una edición estructural no cambia el estado"
+    );
 
-    let (estado, dia): (String, String) = sqlx::query_as(
-        "SELECT status::text, practice_day::text FROM lapses WHERE id = $1",
-    )
-    .bind(original.id)
-    .fetch_one(&mut *tx)
-    .await?;
+    let (estado, dia): (String, String) =
+        sqlx::query_as("SELECT status::text, practice_day::text FROM lapses WHERE id = $1")
+            .bind(original.id)
+            .fetch_one(&mut *tx)
+            .await?;
     assert_eq!(estado, "PLANNED");
     assert_eq!(dia, "FRIDAY");
 
@@ -281,13 +304,21 @@ async fn editar_un_lapso_cerrado_se_rechaza() -> Resultado {
     sqlx::query("SAVEPOINT intento_editar")
         .execute(&mut *tx)
         .await?;
-    let resultado = editar(&mut tx, lapso.id, entrada("2047", "2", "2047-01-06", "2047-03-27")?).await;
+    let resultado = editar(
+        &mut tx,
+        lapso.id,
+        entrada("2047", "2", "2047-01-06", "2047-03-27")?,
+    )
+    .await;
 
     let Err(error) = resultado else {
         panic!("editar un lapso cerrado debe fallar (RF-9)");
     };
     let (codigo, _) = codigo_de(&error);
-    assert_eq!(codigo, "23514", "el trigger del CLOSED lo rechaza con check_violation");
+    assert_eq!(
+        codigo, "23514",
+        "el trigger del CLOSED lo rechaza con check_violation"
+    );
 
     sqlx::query("ROLLBACK TO SAVEPOINT intento_editar")
         .execute(&mut *tx)
@@ -406,7 +437,10 @@ async fn mover_fechas_dejando_un_evento_fuera_se_rechaza() -> Resultado {
         panic!("mover fechas dejando eventos fuera debe rechazarse (RF-11)");
     };
     let (codigo, _) = codigo_de(&error);
-    assert_eq!(codigo, "23514", "el trigger de fechas vs eventos responde con check_violation");
+    assert_eq!(
+        codigo, "23514",
+        "el trigger de fechas vs eventos responde con check_violation"
+    );
 
     sqlx::query("ROLLBACK TO SAVEPOINT intento_mover")
         .execute(&mut *tx)
@@ -417,7 +451,11 @@ async fn mover_fechas_dejando_un_evento_fuera_se_rechaza() -> Resultado {
             .bind(lapso.id)
             .fetch_one(&mut *tx)
             .await?;
-    assert_eq!(inicio.to_string(), "2035-01-07", "las fechas originales siguen");
+    assert_eq!(
+        inicio.to_string(),
+        "2035-01-07",
+        "las fechas originales siguen"
+    );
     assert_eq!(fin.to_string(), "2035-12-16");
 
     tx.rollback().await?;
@@ -501,11 +539,12 @@ async fn activar_un_lapso_no_planeado_falla() -> Resultado {
     let repetida = activar(&mut tx, lapso.id).await?;
     assert_eq!(repetida.status, "ACTIVE", "un lapso ya activo sigue activo");
 
-    let activaciones: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE entity_id = $1 AND action = 'activar'")
-            .bind(lapso.id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let activaciones: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_logs WHERE entity_id = $1 AND action = 'activar'",
+    )
+    .bind(lapso.id)
+    .fetch_one(&mut *tx)
+    .await?;
     assert_eq!(activaciones, 1, "solo se audita la activación real");
 
     tx.rollback().await?;
@@ -535,7 +574,12 @@ async fn el_cierre_pasa_un_lapso_activo_a_cerrado_e_inmutable() -> Resultado {
     sqlx::query("SAVEPOINT intento_editar")
         .execute(&mut *tx)
         .await?;
-    let resultado = editar(&mut tx, lapso.id, entrada("2047", "2", "2047-01-06", "2047-03-27")?).await;
+    let resultado = editar(
+        &mut tx,
+        lapso.id,
+        entrada("2047", "2", "2047-01-06", "2047-03-27")?,
+    )
+    .await;
     let Err(error) = resultado else {
         panic!("un lapso CLOSED no se puede editar (RF-15 terminal)");
     };
@@ -546,12 +590,16 @@ async fn el_cierre_pasa_un_lapso_activo_a_cerrado_e_inmutable() -> Resultado {
         .execute(&mut *tx)
         .await?;
 
-    let cierres: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE entity_id = $1 AND action = 'cerrar'")
-            .bind(lapso.id)
-            .fetch_one(&mut *tx)
-            .await?;
-    assert_eq!(cierres, 1, "RF-19: una sola entrada de cierre en el historial");
+    let cierres: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_logs WHERE entity_id = $1 AND action = 'cerrar'",
+    )
+    .bind(lapso.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    assert_eq!(
+        cierres, 1,
+        "RF-19: una sola entrada de cierre en el historial"
+    );
 
     tx.rollback().await?;
     Ok(())
@@ -569,11 +617,12 @@ async fn cerrar_un_lapso_no_activo_falla() -> Resultado {
     let repetida = cerrar(&mut tx, lapso.id).await?;
     assert_eq!(repetida.status, "PLANNED", "un planeado no se cierra");
 
-    let cierres: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE entity_id = $1 AND action = 'cerrar'")
-            .bind(lapso.id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let cierres: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_logs WHERE entity_id = $1 AND action = 'cerrar'",
+    )
+    .bind(lapso.id)
+    .fetch_one(&mut *tx)
+    .await?;
     assert_eq!(cierres, 0, "no se audita un cierre que no hizo nada");
 
     tx.rollback().await?;
@@ -640,7 +689,10 @@ async fn eliminar_un_lapso_cerrado_se_rechaza() -> Resultado {
         panic!("eliminar un lapso cerrado debe fallar (RF-18)");
     };
     let (codigo, _) = codigo_de(&error);
-    assert_eq!(codigo, "23514", "el guardarraíl del borrado responde con check_violation");
+    assert_eq!(
+        codigo, "23514",
+        "el guardarraíl del borrado responde con check_violation"
+    );
 
     sqlx::query("ROLLBACK TO SAVEPOINT intento_eliminar")
         .execute(&mut *tx)
@@ -662,8 +714,11 @@ async fn eliminar_un_lapso_terminado_se_rechaza() -> Resultado {
     let mut tx = pool.begin().await?;
 
     // Un lapso con fechas pasadas: terminó aunque nunca se haya cerrado.
-    let lapso = crear(&mut tx, preparar_entrada("2020", "3", "2020-01-03", "2020-03-27", "FRIDAY")?)
-        .await?;
+    let lapso = crear(
+        &mut tx,
+        preparar_entrada("2020", "3", "2020-01-03", "2020-03-27", "FRIDAY")?,
+    )
+    .await?;
 
     // RF-18: el guardarraíl también lo protege (end_date < CURRENT_DATE).
     sqlx::query("SAVEPOINT intento_eliminar")
@@ -707,8 +762,12 @@ async fn eliminar_un_lapso_con_evento_se_rechaza() -> Resultado {
 
     // El pre-chequeo del service (`tiene_datos`) detecta la fila en `events`;
     // sobre él responde el `409` entendible antes de llegar al DELETE.
-    let tiene_datos = civik_backend::modules::lapses::queries::tiene_datos(tx.as_mut(), lapso.id).await?;
-    assert!(tiene_datos, "el pre-chequeo del service ve los eventos del lapso");
+    let tiene_datos =
+        civik_backend::modules::lapses::queries::tiene_datos(tx.as_mut(), lapso.id).await?;
+    assert!(
+        tiene_datos,
+        "el pre-chequeo del service ve los eventos del lapso"
+    );
 
     // RF-18: por si el service fallara, `lapses_delete_guard` aborta el DELETE
     // con 23514 antes de que la FK RESTRICT de `events` pueda sonar: el guard
@@ -724,7 +783,10 @@ async fn eliminar_un_lapso_con_evento_se_rechaza() -> Resultado {
     };
 
     let (codigo, _) = codigo_de(&error);
-    assert_eq!(codigo, "23514", "el guardarraíl se adelanta a la FK RESTRICT");
+    assert_eq!(
+        codigo, "23514",
+        "el guardarraíl se adelanta a la FK RESTRICT"
+    );
     assert!(
         error.to_string().contains("evento"),
         "el mensaje del guard debe señalar los eventos: {error}"
@@ -763,7 +825,10 @@ async fn el_alta_deja_su_entrada_en_el_historial() -> Resultado {
     assert_eq!(action, "alta");
 
     let data: serde_json::Value = serde_json::from_str(&data_raw)?;
-    assert_eq!(data["anio_escolar"], 2045, "la auditoría guarda los valores");
+    assert_eq!(
+        data["anio_escolar"], 2045,
+        "la auditoría guarda los valores"
+    );
     assert_eq!(data["numero_lapso"], 1);
     assert_eq!(data["inicio"], "2045-01-05");
     assert_eq!(data["dia_practica"], "THURSDAY");
@@ -819,18 +884,22 @@ async fn el_borrado_deja_su_auditoria_antes_de_desaparecer() -> Resultado {
 
     eliminar(&mut tx, lapso.id).await?;
 
-    let acciones: Vec<(String, String)> =
-        sqlx::query_as("SELECT action, data::text FROM audit_logs WHERE entity_id = $1 ORDER BY id")
-            .bind(lapso.id)
-            .fetch_all(&mut *tx)
-            .await?;
+    let acciones: Vec<(String, String)> = sqlx::query_as(
+        "SELECT action, data::text FROM audit_logs WHERE entity_id = $1 ORDER BY id",
+    )
+    .bind(lapso.id)
+    .fetch_all(&mut *tx)
+    .await?;
 
     let nombres: Vec<&str> = acciones.iter().map(|(accion, _)| accion.as_str()).collect();
     assert_eq!(nombres, ["alta", "activar", "eliminar"]);
 
     let (_, data_raw) = acciones.last().unwrap();
     let data: serde_json::Value = serde_json::from_str(data_raw)?;
-    assert_eq!(data["estado"], "ACTIVE", "la auditoría conserva el último estado");
+    assert_eq!(
+        data["estado"], "ACTIVE",
+        "la auditoría conserva el último estado"
+    );
 
     tx.rollback().await?;
     Ok(())

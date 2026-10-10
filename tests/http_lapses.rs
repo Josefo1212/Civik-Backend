@@ -89,7 +89,11 @@ async fn crear_lapso(app: Router, anio: i32) -> Result<Uuid, Box<dyn std::error:
                 .body(Body::from(cuerpo_lapso(anio, "1").to_string()))?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::CREATED, "RF-1: el alta funciona");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::CREATED,
+        "RF-1: el alta funciona"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     Ok(Uuid::parse_str(json["id"].as_str().unwrap())?)
@@ -169,7 +173,11 @@ async fn alta_con_anio_fuera_de_rango_responde_400() -> Resultado {
                     .body(Body::from(cuerpo.to_string()))?,
             )
             .await?;
-        assert_eq!(respuesta.status(), StatusCode::BAD_REQUEST, "año «{malo}» (RF-2)");
+        assert_eq!(
+            respuesta.status(),
+            StatusCode::BAD_REQUEST,
+            "año «{malo}» (RF-2)"
+        );
         let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
         let json: Value = serde_json::from_slice(&bytes)?;
         assert!(
@@ -200,11 +208,18 @@ async fn alta_con_numero_fuera_de_rango_responde_400() -> Resultado {
                     .body(Body::from(cuerpo.to_string()))?,
             )
             .await?;
-        assert_eq!(respuesta.status(), StatusCode::BAD_REQUEST, "número «{malo}» (RF-2)");
+        assert_eq!(
+            respuesta.status(),
+            StatusCode::BAD_REQUEST,
+            "número «{malo}» (RF-2)"
+        );
         let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
         let json: Value = serde_json::from_slice(&bytes)?;
         assert!(
-            json["error"].as_str().unwrap_or("").contains("número de lapso"),
+            json["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("número de lapso"),
             "el mensaje nombra el campo: {json}"
         );
     }
@@ -232,11 +247,18 @@ async fn alta_con_fechas_invertidas_responde_400() -> Resultado {
                 .body(Body::from(cuerpo.to_string()))?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::BAD_REQUEST, "RF-2: fin antes de inicio");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::BAD_REQUEST,
+        "RF-2: fin antes de inicio"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     assert!(
-        json["error"].as_str().unwrap_or("").contains("fecha de fin"),
+        json["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("fecha de fin"),
         "el mensaje nombra el campo: {json}"
     );
 
@@ -261,12 +283,19 @@ async fn alta_con_dia_invalido_responde_400_y_enumera_los_dias() -> Resultado {
                 .body(Body::from(cuerpo.to_string()))?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::BAD_REQUEST, "RF-2: día fuera del catálogo");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::BAD_REQUEST,
+        "RF-2: día fuera del catálogo"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     let error = json["error"].as_str().unwrap_or("");
     assert!(error.contains("día de práctica"), "mensaje: {error}");
-    assert!(error.contains("MONDAY"), "el mensaje enumera los días: {error}");
+    assert!(
+        error.contains("MONDAY"),
+        "el mensaje enumera los días: {error}"
+    );
 
     Ok(())
 }
@@ -295,7 +324,11 @@ async fn alta_con_campos_faltantes_responde_400() -> Resultado {
                 .body(Body::from(cuerpo.to_string()))?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::UNPROCESSABLE_ENTITY, "axum 0.8: 422");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "axum 0.8: 422"
+    );
 
     Ok(())
 }
@@ -318,7 +351,11 @@ async fn alta_duplicada_en_mismo_anio_y_numero_responde_409() -> Resultado {
                 .body(Body::from(cuerpo_lapso(anio, "1").to_string()))?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::CONFLICT, "RF-3: (año, número) repetido");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::CONFLICT,
+        "RF-3: (año, número) repetido"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     assert!(
@@ -353,7 +390,11 @@ async fn alta_solapada_responde_409() -> Resultado {
                 .body(Body::from(cuerpo.to_string()))?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::CONFLICT, "RF-4: fechas solapadas");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::CONFLICT,
+        "RF-4: fechas solapadas"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     assert!(
@@ -434,7 +475,11 @@ async fn consulta_inexistente_responde_404() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::NOT_FOUND, "RF-7: 404 al consultar");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::NOT_FOUND,
+        "RF-7: 404 al consultar"
+    );
 
     Ok(())
 }
@@ -469,10 +514,17 @@ async fn edicion_200_normaliza_y_mantiene_el_estado() -> Resultado {
                 ))?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::OK, "RF-8: edición estructural 200");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::OK,
+        "RF-8: edición estructural 200"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
-    assert_eq!(json["school_year"], 2048, "RF-8: la edición valida igual que el alta");
+    assert_eq!(
+        json["school_year"], 2048,
+        "RF-8: la edición valida igual que el alta"
+    );
     assert_eq!(json["lapse_number"], 2);
     assert_eq!(json["practice_day"], "FRIDAY");
     assert_eq!(json["status"], "PLANNED", "RF-8: no toca el estado");
@@ -499,9 +551,7 @@ async fn edicion_hacia_un_anio_y_numero_ajenos_responde_409() -> Resultado {
                     .method("POST")
                     .uri("/lapses")
                     .header("content-type", "application/json")
-                    .body(Body::from(
-                        cuerpo_lapso(anio_b, "2").to_string(),
-                    ))?,
+                    .body(Body::from(cuerpo_lapso(anio_b, "2").to_string()))?,
             )
             .await?;
         assert_eq!(respuesta.status(), StatusCode::CREATED);
@@ -531,7 +581,11 @@ async fn edicion_hacia_un_anio_y_numero_ajenos_responde_409() -> Resultado {
                 ))?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::CONFLICT, "RF-10: combinación ajena");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::CONFLICT,
+        "RF-10: combinación ajena"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     assert!(
@@ -556,7 +610,9 @@ async fn edicion_inexistente_responde_404() -> Resultado {
                 .method("PATCH")
                 .uri(format!("/lapses/{}", Uuid::new_v4()))
                 .header("content-type", "application/json")
-                .body(Body::from(cuerpo_lapso(anio_escolar_unico(), "1").to_string()))?,
+                .body(Body::from(
+                    cuerpo_lapso(anio_escolar_unico(), "1").to_string(),
+                ))?,
         )
         .await?;
     assert_eq!(respuesta.status(), StatusCode::NOT_FOUND);
@@ -616,7 +672,11 @@ async fn activar_un_segundo_lapso_con_otro_activo_responde_409() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(activado.status(), StatusCode::OK, "RF-12: el primero se activa");
+    assert_eq!(
+        activado.status(),
+        StatusCode::OK,
+        "RF-12: el primero se activa"
+    );
 
     let respuesta = app
         .oneshot(
@@ -626,7 +686,11 @@ async fn activar_un_segundo_lapso_con_otro_activo_responde_409() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::CONFLICT, "RF-13: un solo activo");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::CONFLICT,
+        "RF-13: un solo activo"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     assert!(
@@ -668,7 +732,11 @@ async fn activar_un_lapso_ya_activo_responde_409() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::CONFLICT, "RF-14: activar un activo");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::CONFLICT,
+        "RF-14: activar un activo"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     assert!(
@@ -700,7 +768,11 @@ async fn cerrar_un_lapso_planeado_responde_409() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::CONFLICT, "RF-16: cerrar un planeado");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::CONFLICT,
+        "RF-16: cerrar un planeado"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     let json: Value = serde_json::from_slice(&bytes)?;
     assert!(
@@ -750,7 +822,11 @@ async fn eliminacion_204_sin_cuerpo_y_el_lapso_desaparece() -> Resultado {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(respuesta.status(), StatusCode::NO_CONTENT, "RF-17: 204 sin cuerpo");
+    assert_eq!(
+        respuesta.status(),
+        StatusCode::NO_CONTENT,
+        "RF-17: 204 sin cuerpo"
+    );
     let bytes = to_bytes(respuesta.into_body(), usize::MAX).await?;
     assert!(bytes.is_empty(), "el 204 no debe tener cuerpo");
 

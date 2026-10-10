@@ -31,10 +31,14 @@ pub const NUMERO_MAXIMO: i16 = 3;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ErrorDominio {
-    #[error("El campo «año escolar» no es válido: debe ser un año entre {ANIO_MINIMO} y {ANIO_MAXIMO}")]
+    #[error(
+        "El campo «año escolar» no es válido: debe ser un año entre {ANIO_MINIMO} y {ANIO_MAXIMO}"
+    )]
     AnioFueraDeRango,
 
-    #[error("El campo «número de lapso» no es válido: debe ser {NUMERO_MINIMO}, {NUMERO_MAXIMO}. ")]
+    #[error(
+        "El campo «número de lapso» no es válido: debe ser {NUMERO_MINIMO}, {NUMERO_MAXIMO}. "
+    )]
     NumeroFueraDeRango,
 
     #[error("La {campo} '{valor}' no es una fecha válida (use AAAA-MM-DD)")]
@@ -43,7 +47,10 @@ pub enum ErrorDominio {
     #[error("La fecha de fin es anterior a la fecha de inicio")]
     FechasInvertidas,
 
-    #[error("El campo «día de práctica» '{dia}' no es válido. Días admitidos: {}", lista_dias())]
+    #[error(
+        "El campo «día de práctica» '{dia}' no es válido. Días admitidos: {}",
+        lista_dias()
+    )]
     DiaInvalido { dia: String },
 
     #[error("No se puede {operacion}: el lapso debe estar {esperado}, pero está {actual}")]
@@ -228,7 +235,10 @@ pub fn preparar_entrada(
 }
 
 fn parsear_anio(valor: &str) -> Result<i32, ErrorDominio> {
-    let anio: i32 = valor.trim().parse().map_err(|_| ErrorDominio::AnioFueraDeRango)?;
+    let anio: i32 = valor
+        .trim()
+        .parse()
+        .map_err(|_| ErrorDominio::AnioFueraDeRango)?;
     if !(ANIO_MINIMO..=ANIO_MAXIMO).contains(&anio) {
         return Err(ErrorDominio::AnioFueraDeRango);
     }
@@ -236,7 +246,10 @@ fn parsear_anio(valor: &str) -> Result<i32, ErrorDominio> {
 }
 
 fn parsear_numero(valor: &str) -> Result<i16, ErrorDominio> {
-    let numero: i16 = valor.trim().parse().map_err(|_| ErrorDominio::NumeroFueraDeRango)?;
+    let numero: i16 = valor
+        .trim()
+        .parse()
+        .map_err(|_| ErrorDominio::NumeroFueraDeRango)?;
     if !(NUMERO_MINIMO..=NUMERO_MAXIMO).contains(&numero) {
         return Err(ErrorDominio::NumeroFueraDeRango);
     }
@@ -265,10 +278,7 @@ fn lista_dias() -> String {
 /// retrocesos: activar solo desde `PLANNED`, cerrar solo desde `ACTIVE`, y
 /// editar/eliminar nunca sobre un `CLOSED`. El mensaje dice el estado
 /// esperado y el actual (RNF-4).
-pub fn validar_transicion(
-    estado: &EstadoLapso,
-    operacion: Operacion,
-) -> Result<(), ErrorDominio> {
+pub fn validar_transicion(estado: &EstadoLapso, operacion: Operacion) -> Result<(), ErrorDominio> {
     let permitido = match operacion {
         Operacion::Activar => estado == &EstadoLapso::Planeado,
         Operacion::Cerrar => estado == &EstadoLapso::Activo,
@@ -300,10 +310,7 @@ pub fn validar_transicion(
 ///
 /// `hoy` se inyecta para que la función siga siendo pura y testeable sin fechas
 /// atadas al reloj del equipo.
-pub fn validar_borrado_permitido(
-    end_date: NaiveDate,
-    hoy: NaiveDate,
-) -> Result<(), ErrorDominio> {
+pub fn validar_borrado_permitido(end_date: NaiveDate, hoy: NaiveDate) -> Result<(), ErrorDominio> {
     if end_date < hoy {
         return Err(ErrorDominio::LapsoTerminado { fecha: end_date });
     }
@@ -361,8 +368,15 @@ mod tests {
         };
         let mensaje = error.to_string();
 
-        for dia in ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
-        {
+        for dia in [
+            "MONDAY",
+            "TUESDAY",
+            "WEDNESDAY",
+            "THURSDAY",
+            "FRIDAY",
+            "SATURDAY",
+            "SUNDAY",
+        ] {
             assert!(
                 mensaje.contains(dia),
                 "el mensaje debe enumerar «{dia}», y fue: {mensaje}"
@@ -464,8 +478,14 @@ mod tests {
 
         assert_eq!(datos.school_year, 2026);
         assert_eq!(datos.lapse_number, 1);
-        assert_eq!(datos.start_date, NaiveDate::from_ymd_opt(2026, 9, 14).unwrap());
-        assert_eq!(datos.end_date, NaiveDate::from_ymd_opt(2026, 12, 18).unwrap());
+        assert_eq!(
+            datos.start_date,
+            NaiveDate::from_ymd_opt(2026, 9, 14).unwrap()
+        );
+        assert_eq!(
+            datos.end_date,
+            NaiveDate::from_ymd_opt(2026, 12, 18).unwrap()
+        );
         assert_eq!(datos.practice_day.as_str(), "THURSDAY");
         Ok(())
     }
@@ -478,7 +498,10 @@ mod tests {
         // ocurrida: el dominio no compara con la fecha del equipo.
         let datos = preparar_entrada("2026", "1", "2026-10-08", "2026-12-18", "THURSDAY")?;
 
-        assert_eq!(datos.start_date, NaiveDate::from_ymd_opt(2026, 10, 8).unwrap());
+        assert_eq!(
+            datos.start_date,
+            NaiveDate::from_ymd_opt(2026, 10, 8).unwrap()
+        );
         Ok(())
     }
 
@@ -607,7 +630,13 @@ mod tests {
         assert_eq!(
             lista,
             vec![
-                "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"
+                "MONDAY",
+                "TUESDAY",
+                "WEDNESDAY",
+                "THURSDAY",
+                "FRIDAY",
+                "SATURDAY",
+                "SUNDAY"
             ]
         );
     }

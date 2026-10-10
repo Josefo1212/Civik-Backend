@@ -53,7 +53,27 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   RF-19) + 9 tests `oneshot` en `tests/http_students.rs` (commitean, limpian
   con `DELETE` SQL directo). **130 tests**, clippy **0/0**. **Fase 3
   cerrada**.
-- **Fase 4 (`lapses`)**: hexagonal parcial (domain+service+queries, 7 rutas HTTP). T1–T8 completos: 23 tests integración (`tests/lapses.rs`), 21 HTTP (`tests/http_lapses.rs`), 6 defensa BD (`tests/conflictos_bd.rs`). **Total +50 tests lapses**, suite completa verde, clippy 0/0. **Fase 4 cerrada**; sigue **Fase 5 (`events` CRUD manual)**.
+- **Fase 4 (`lapses`)**: hexagonal parcial (domain+service+queries, 7 rutas HTTP). T1–T8 completos: 23 tests integración (`tests/lapses.rs`), 21 HTTP (`tests/http_lapses.rs`), 6 defensa BD (`tests/conflictos_bd.rs`). **Total +50 tests lapses**, suite completa verde, clippy 0/0. **Fase 4 cerrada**.
+- **Fase 5 (`events` CRUD manual)**: spec 005 **implementada** (RF-1 a RF-13).
+  `domain.rs` (reglas puras, `preparar_creacion_manual`, `puede_cancelarse`,
+  `puede_editarse`), `service.rs` con transacción (crear/editar/cancelar +
+  auditoría), `queries/*.sql`, `handler.rs` + 6 rutas HTTP en `app.rs`; 7
+  tests en `tests/events.rs`, 9 HTTP en `tests/http_events.rs`, defensa BD en
+  `tests/conflictos_bd.rs` (23514 rango, práctica regular manual en
+  practice_day). **Fase 5 cerrada**.
+- **Fase 6 (`events` auto + reprogramación)**: spec 006 **implementada**
+  (RF-14 a RF-20). Decisiones acordadas 2026-10-09: **generador manual que
+  cubre todo el rango** (`POST /lapses/{id}/generar-practicas`, idempotente,
+  omite cualquier `PRACTICA_REGULAR` existente AUTO o MANUAL) y
+  **reprogramar = cambiar `lapses.practice_day`**
+  (`POST /lapses/{id}/reprogram-practice-day { "nuevo_dia" }`, mueve
+  pendientes al próximo nuevo día, respeta destinos ocupados, `movidos`/
+  `no_movidos`). Rutas bajo `/lapses/{id}/...`; auditoría 1 entrada por
+  operación (no por evento); no-op con el mismo día sin auditoría falsa.
+  11 tests `tests/events_auto.rs` + 5 HTTP `tests/http_events.rs` +
+  `dos_auto_el_mismo_dia_emiten_unicidad_23505` en `tests/conflictos_bd.rs`.
+  Mapeo `uq_events_auto_one_per_day` (23505) → 409 en `shared/error.rs`.
+  **Fase 6 cerrada**; sigue **Fase 7 (`attendance`)**.
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -85,8 +105,9 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   práctica regular (AUTO *o* MANUAL)**: cada día de práctica tiene como
   máximo una regular, la cree quien la cree. `uq_events_auto_one_per_day`
   solo protege entre AUTO; esta regla cierra el hueco entre una regular
-  creada a mano y la del generador. Cuándo corre el generador y si mira
-  hacia atrás es decisión abierta de la fase 6 (spec 006).
+  creada a mano y la del generador. **Decidido (spec 006, 2026-10-09):** el
+  generador es manual, idempotente y cubre todo el rango del lapso; no mira
+  el reloj (puede crear fechas pasadas mientras el lapso no esté `CLOSED`).
 
 ## Aprendizajes y errores a evitar
 
@@ -154,7 +175,9 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 
 ## Próximos pasos
 
-- **Fase 5 — `events` (CRUD manual primero)**: crear presentación/práctica extra/práctica regular manual (`source MANUAL`), cancelar con motivo; dependerá de `lapses`.
+- **Fase 7 — `attendance`**: registrar y corregir asistencia (sin
+  sincronización todavía); cubre reglas 7 y 10. Depende de `events` y
+  `students` ya terminados.
 - Los `dead_code` de `shared/*` los limpia el cierre de la fase en curso.
 
 ## Bitácora
@@ -228,3 +251,18 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   huecos. `students` sin constraints UNIQUE: el único `23505` de la fase es
   `uq_sections_grade_section_shift`. **130 tests**, clippy 0/0, base limpia,
   smoke `curl` sin cédula.
+
+- **Fase 5 (2026-10-09)** — `events` CRUD manual, spec 005 `implementada`
+  (RF-1 a RF-13). `domain.rs` puro + `service.rs` (crear/editar/cancelar,
+  transacción + auditoría) + `queries/*.sql` + 6 rutas HTTP. Tests:
+  `tests/events.rs` (7), `tests/http_events.rs` (9), defensa BD en
+  `conflictos_bd.rs`. **Fase 5 cerrada.**
+- **Fase 6 (2026-10-09)** — auto + reprogramación, spec 006 `implementada`
+  (RF-14 a RF-20). Generador manual idempotente que cubre todo el rango
+  (`/lapses/{id}/generar-practicas`); reprogramar cambia `practice_day`
+  (`/lapses/{id}/reprogram-practice-day`), mueve pendientes al próximo nuevo
+  día y respeta destinos ocupados; auditoría de 1 entrada por operación;
+  no-op con el mismo día sin auditoría. 11 tests `tests/events_auto.rs`
+  (incluye RF-17 destino ocupado por regular CANCELLED), 5 HTTP +
+  23505→409 (mapeo en `shared/error.rs`, test real en `conflictos_bd.rs`).
+  Suite completa verde (250 tests), clippy 0/0. **Fase 6 cerrada.**

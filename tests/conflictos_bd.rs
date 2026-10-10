@@ -9,6 +9,8 @@
 
 mod common;
 
+use chrono::{Datelike, Weekday};
+use civik_backend::shared::error::AppError;
 
 type Resultado = Result<(), Box<dyn std::error::Error>>;
 #[tokio::test]
@@ -270,7 +272,10 @@ async fn eliminar_lapso_con_evento_emite_restrict_23001() -> Resultado {
     // último escollo: por eso lo dejamos explícito para documentar la política
     // RESTRICT.
     if let sqlx::Error::Database(base) = &error {
-        assert!(matches!(base.code().as_deref(), Some("23514") | Some("23001")));
+        assert!(matches!(
+            base.code().as_deref(),
+            Some("23514") | Some("23001")
+        ));
     } else {
         panic!("esperaba error DB, llegó: {error}");
     }
@@ -289,10 +294,87 @@ async fn evento_fuera_de_rango_lapso_emite_check_violation_23514() -> Resultado 
     let anio = 2070;
     let lapso = civik_backend::modules::lapses::queries::crear(
         &mut tx,
-        civik_backend::modules::lapses::domain::preparar_entrada(&anio.to_string(), "1", &format!("{anio}-09-01"), &format!("{anio}-12-20"), "THURSDAY").unwrap(),
+        civik_backend::modules::lapses::domain::preparar_entrada(
+            &anio.to_string(),
+            "1",
+            &format!("{anio}-09-01"),
+            &format!("{anio}-12-20"),
+            "THURSDAY",
+        )
+        .unwrap(),
     )
     .await?;
-    let res = civik_backend::modules::events::queries::crear_manual(tx.as_mut(), lapso.id, chrono::NaiveDate::from_ymd_opt(anio, 8, 1).unwrap(), "PRACTICA_EXTRA", "Extra").await;
-    assert!(matches!(res, Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23514")));
+    let res = civik_backend::modules::events::queries::crear_manual(
+        tx.as_mut(),
+        lapso.id,
+        chrono::NaiveDate::from_ymd_opt(anio, 8, 1).unwrap(),
+        "PRACTICA_EXTRA",
+        "Extra",
+    )
+    .await;
+    assert!(
+        matches!(res, Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23514"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn dos_auto_el_mismo_dia_emiten_unicidad_23505() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let anio = 2097;
+    let lapso = civik_backend::modules::lapses::queries::crear(
+        &mut tx,
+        civik_backend::modules::lapses::domain::preparar_entrada(
+            &anio.to_string(),
+            "1",
+            &format!("{anio}-01-01"),
+            &format!("{anio}-03-26"),
+            "THURSDAY",
+        )
+        .unwrap(),
+    )
+    .await?;
+
+    // Primer jueves del lapso (la regla 1 exige que un AUTO caiga ahí).
+    let mut jueves = chrono::NaiveDate::from_ymd_opt(anio, 1, 1).unwrap();
+    while jueves.weekday() != Weekday::Thu {
+        jueves = jueves.succ_opt().unwrap();
+    }
+
+    sqlx::query(
+        "INSERT INTO events (id_lapse, event_date, type_event, source, event_name)
+         VALUES ($1, $2, 'PRACTICA_REGULAR', 'AUTO', 'Primera')",
+    )
+    .bind(lapso.id)
+    .bind(jueves)
+    .execute(tx.as_mut())
+    .await?;
+
+    // El índice parcial `uq_events_auto_one_per_day` debe rechazar el segundo.
+    let resultado = sqlx::query(
+        "INSERT INTO events (id_lapse, event_date, type_event, source, event_name)
+         VALUES ($1, $2, 'PRACTICA_REGULAR', 'AUTO', 'Segunda')",
+    )
+    .bind(lapso.id)
+    .bind(jueves)
+    .execute(tx.as_mut())
+    .await;
+
+    let Err(error) = resultado else {
+        panic!("dos AUTO el mismo día deben violar `uq_events_auto_one_per_day`");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23505"));
+        assert_eq!(base.constraint(), Some("uq_events_auto_one_per_day"));
+    } else {
+        panic!("esperaba error DB, llegó: {error}");
+    }
+
+    // La cadena completa: el error real se traduce a 409, no a 500.
+    assert!(matches!(AppError::from(error), AppError::Conflict(_)));
+
+    tx.rollback().await?;
     Ok(())
 }

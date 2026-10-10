@@ -43,11 +43,13 @@ pub fn build_router(pool: PgPool) -> Router {
         )
         .route("/lapses/{id}/activar", post(lapses::activar))
         .route("/lapses/{id}/cerrar", post(lapses::cerrar))
-        .route("/events", post(events::crear).get(events::listar))
+        .route("/lapses/{id}/generar-practicas", post(events::generar_auto))
         .route(
-            "/events/{id}",
-            get(events::consultar).patch(events::editar),
+            "/lapses/{id}/reprogram-practice-day",
+            post(events::reprogramar),
         )
+        .route("/events", post(events::crear).get(events::listar))
+        .route("/events/{id}", get(events::consultar).patch(events::editar))
         .route("/events/{id}/cancel", post(events::cancelar))
         .with_state(pool)
 }

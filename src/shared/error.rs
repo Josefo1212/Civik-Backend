@@ -94,9 +94,12 @@ pub(crate) fn mapear_violacion(
         (Some("23505"), Some("uq_lapses_single_active")) => Some(AppError::Conflict(
             "Ya hay otro lapso activo: el sistema solo admite uno".to_string(),
         )),
-        (Some("23001") | Some("23503"), Some("events_id_lapse_fkey")) => Some(
-            AppError::Conflict("El lapso tiene eventos asociados".to_string()),
-        ),
+        (Some("23505"), Some("uq_events_auto_one_per_day")) => Some(AppError::Conflict(
+            "Ya existe una práctica regular en esa fecha".to_string(),
+        )),
+        (Some("23001") | Some("23503"), Some("events_id_lapse_fkey")) => Some(AppError::Conflict(
+            "El lapso tiene eventos asociados".to_string(),
+        )),
         (Some("23001") | Some("23503"), Some("grade_overrides_id_lapse_fkey")) => Some(
             AppError::Conflict("El lapso tiene overrides de nota".to_string()),
         ),
@@ -148,7 +151,19 @@ mod tests {
     #[test]
     fn duplicado_de_llave_primaria_no_es_conflict() {
         assert!(mapear_violacion(Some("23505"), Some("sections_pkey")).is_none());
-        assert!(mapear_violacion(Some("23505"), Some("uq_events_auto_one_per_day")).is_none());
+        assert!(mapear_violacion(Some("23505"), Some("events_pkey")).is_none());
+    }
+
+    #[test]
+    fn colision_de_practica_auto_es_conflict() {
+        // La generación/reprogramación previene la colisión en el service,
+        // pero si una se filtra, el índice único `uq_events_auto_one_per_day`
+        // (23505) debe traducirse a 409, no a 500.
+        let error = mapear_violacion(Some("23505"), Some("uq_events_auto_one_per_day")).unwrap();
+
+        assert!(matches!(error, AppError::Conflict(_)));
+        let mensaje = error.to_string();
+        assert!(mensaje.contains("fecha"), "mensaje: {mensaje}");
     }
 
     #[test]
