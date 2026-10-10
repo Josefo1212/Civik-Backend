@@ -1,6 +1,6 @@
 # Spec 007 — Asistencia (registrar y corregir)
 
-Estado: borrador
+Estado: implementada
 
 ## Contexto y objetivo
 

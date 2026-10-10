@@ -8,22 +8,23 @@ use sqlx::PgPool;
 use tracing::warn;
 
 use crate::modules::events::handler as events;
+use crate::modules::sections::handler as sections_handler;
 use crate::modules::lapses::handler as lapses;
-use crate::modules::sections::handler;
+use crate::modules::attendance::handler as attendance_handler;
 use crate::modules::students::handler as estudiantes;
 
 pub fn build_router(pool: PgPool) -> Router {
     Router::new()
         .route("/_health", get(health_check))
-        .route("/sections", post(handler::crear).get(handler::listar))
+        .route("/sections", post(sections_handler::crear).get(sections_handler::listar))
         .route(
             "/sections/{id}",
-            get(handler::consultar)
-                .put(handler::editar)
-                .delete(handler::eliminar),
+            get(sections_handler::consultar)
+                .put(sections_handler::editar)
+                .delete(sections_handler::eliminar),
         )
-        .route("/sections/{id}/baja", post(handler::baja))
-        .route("/sections/{id}/reactivar", post(handler::reactivar))
+        .route("/sections/{id}/baja", post(sections_handler::baja))
+        .route("/sections/{id}/reactivar", post(sections_handler::reactivar))
         .route(
             "/sections/{id}/students",
             post(estudiantes::crear).get(estudiantes::listar),
@@ -51,6 +52,7 @@ pub fn build_router(pool: PgPool) -> Router {
         .route("/events", post(events::crear).get(events::listar))
         .route("/events/{id}", get(events::consultar).patch(events::editar))
         .route("/events/{id}/cancel", post(events::cancelar))
+        .merge(attendance_handler::router())
         .with_state(pool)
 }
 
