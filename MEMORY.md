@@ -266,3 +266,7 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   (incluye RF-17 destino ocupado por regular CANCELLED), 5 HTTP +
   23505→409 (mapeo en `shared/error.rs`, test real en `conflictos_bd.rs`).
   Suite completa verde (250 tests), clippy 0/0. **Fase 6 cerrada.**
+
+- **Fase 7 (2026-10-09)** — `attendance` registrar/corregir (sin sincronización offline). Módulo hexagonal parcial: `domain`, `queries/*.sql` (list/insert/set_state), `service` (transacción + auditoría), `handler` (POST /events/{id}/attendance, PATCH /attendance/{id}/{student}) montado en `app.rs`. Tests `tests/attendance.rs` (2), `tests/http_attendance.rs` (1). Defensa con triggers BD existente. Suite verde, clippy 0/0. **Fase 7 cerrada.**
+- **Fase 8 (2026-10-09)** — `grades` hexagonal completo: `domain/compute_grade` puro (sin f64, rust_decimal), `ports` trait + `adapter_pg` (sqlx), `service`, `handler` GET /lapses/{id}/grades/{student}. Tests unitarios `tests/grades.rs` (3). Suite verde, clippy 0/0. **Fase 8 cerrada.**
+- **Fase 9 (2026-10-09)** — Sincronización offline (attendance): revisión de soporte `updated_at`, tests de idempotencia, corrección sin borrar fila, test HTTP. Esquema ya tenía `updated_at`; añadido `tests/http_attendance.rs` (1). **Fase 9 en progreso/T1 completo.** Suite verde (core), clippy 0/0.
