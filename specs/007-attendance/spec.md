@@ -2,6 +2,11 @@
 
 Estado: implementada
 
+> Reconciliación cerrada (fase B, 2026-10-10): la primera implementación cubría
+> solo parte de los RF (faltaban el padrón, el upsert real, los chequeos de
+> lapso cerrado y de estudiante de baja, y la validación de estado). La spec se
+> reescribió y el código se completó; RF-1 a RF-16 con veredicto en `tasks.md`.
+
 ## Contexto y objetivo
 
 La asistencia (`attendance`) es la evidencia que define si un evento ocurrió:
@@ -52,10 +57,14 @@ secuencia y traduce los rechazos a mensajes en español.
   (`POST /events/{id}/attendance`) con una lista de pares
   `id_student`/`state`, EL SISTEMA crea las filas faltantes y actualiza las
   existentes (upsert por PK), y responde 200 con el padrón actualizado.
-- RF-2. SI el evento está `CANCELLED`, ENTONCES el registro responde 409
-  (regla 7: no se registra asistencia en un evento cancelado).
-- RF-3. SI el lapso del evento está `CLOSED`, ENTONCES el registro responde
-  409 (regla 4: un lapso cerrado no admite datos nuevos).
+- RF-2. SI el evento está `CANCELLED`, ENTONCES registrar **o corregir**
+  asistencia responde 409 (regla 7: no se registra asistencia en un evento
+  cancelado). El trigger `check_attendance_guards` lo aplica tanto al `INSERT`
+  como al `UPDATE`, así que el service rechaza antes de tocar la base para dar
+  el mensaje en español.
+- RF-3. SI el lapso del evento está `CLOSED`, ENTONCES registrar **o corregir**
+  asistencia responde 409 (regla 4: un lapso cerrado no admite datos nuevos;
+  `assert_lapse_is_open` corre en `INSERT` y en `UPDATE`).
 - RF-4. SI un `id_student` de la lista no existe, ENTONCES el sistema responde
   404 y no registra ninguna fila.
 - RF-5. SI un `state` no está en `PRESENTE | AUSENTE | JUSTIFICADO`, ENTONCES
@@ -146,15 +155,18 @@ secuencia y traduce los rechazos a mensajes en español.
 
 ## Dudas abiertas
 
-- [NECESITA ACLARACIÓN] **Alcance del padrón (RF-13).** `events` no tiene
-  sección, así que el padrón por defecto es "todos los estudiantes activos"
-  (eventos de todo el colegio); el frontend agrupa por sección si quiere.
-  ¿Es correcto, o la asistencia debe acotarse por sección (implicaría cambiar
-  el esquema y revisar las fases 5–6)?
-- [NECESITA ACLARACIÓN] **Forma del registro (RF-1).** Se asumió **alta en
-  lote** por evento (un `POST` con la lista), que es lo que sirve para pasar
-  lista y para la sincronización offline futura. ¿Se prefiere alta individual
-  (una llamada por estudiante)?
-- [NECESITA ACLARACIÓN] **Estudiante de baja (RF-6, RF-13).** Se asumió: no se
-  le registra asistencia nueva (409), pero su asistencia existente se puede
-  corregir y sigue apareciendo en el padrón de ese evento. ¿Correcto?
+Resueltas en la clarificación del 2026-10-10:
+
+- **Alcance del padrón (RF-13): global.** `events` no tiene sección, así que el
+  padrón de un evento es "todos los estudiantes activos" (más los que ya tengan
+  fila, aunque estén de baja). El frontend agrupa por sección si quiere. Acotar
+  la asistencia por sección implicaría cambiar el esquema y revisar las fases
+  5–6; queda fuera de alcance.
+- **Forma del registro (RF-1): alta en lote por evento.** Un `POST` con la
+  lista de pares `id_student`/`state`: sirve para pasar lista de una vez y es la
+  base de la sincronización offline futura (fase 9). No se agrega alta
+  individual.
+- **Estudiante de baja (RF-6, RF-13):** no se le registra asistencia nueva
+  (`409`), pero su asistencia existente se puede corregir y sigue apareciendo en
+  el padrón de ese evento (con su estado). Es lo que sostiene la regla 5: el
+  evento ya ocurrió y esa evidencia no se oculta.

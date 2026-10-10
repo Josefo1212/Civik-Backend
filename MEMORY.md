@@ -74,11 +74,16 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   `dos_auto_el_mismo_dia_emiten_unicidad_23505` en `tests/conflictos_bd.rs`.
   Mapeo `uq_events_auto_one_per_day` (23505) → 409 en `shared/error.rs`.
   **Fase 6 cerrada**.
-- **Fase 7 (`attendance`)**, **Fase 8 (`grades` hex. completo)** y **Fase 9
-  (`offline`, en progreso — solo T0/T1)** completadas según el detalle de la
-  Bitácora. **Suite completa: 256 tests, clippy 0/0.** Lo que falta de la
-  fase 9 (protocolo de conflicto por `updated_at`, tolerancia de reloj) se
-  especifica antes de codificar; ver "Próximos pasos".
+- **Fases 7 y 8 quedaron marcadas `implementada` pero incumplían sus specs**
+  (SQL inline, `GET` padrón faltante, override/elegibilidad ignorados, rutas
+  distintas a la spec). El 2026-10-10 se abrió una **reconciliación** contra el
+  formato SDD: las specs 007 y 008 se reescribieron y aprobaron (**Fase A**).
+  **Fase 7 reconciliada y cerrada (Fase B)**: upsert real por PK, padrón
+  (`GET /events/{id}/attendance`), `domain` con newtypes y
+  `puede_escribir_asistencia`, `POST` 200 con padrón, corrección anidada en
+  `/events/{id}/attendance/{student}`, defensa BD de reglas 4/7/10. **Fase 8
+  (`grades`) sigue pendiente de reconciliar (Fase C).** **Fase 9** (offline)
+  solo T0/T1. **Suite completa: 275 tests, clippy 0/0.**
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -190,6 +195,13 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
 
 ## Próximos pasos
 
+- **Fase C — Reconciliar `grades` (spec 008)**: hexagonal completo según el
+  plan aprobado — `domain` (`Conteos`, `Nota`, `compute_grade`,
+  `resolver_nota`), `ports` (`GradeRepository`), `adapter_pg` (elegibilidad y
+  overrides), `service`, `handler`
+  (`GET /lapses/{id_lapse}/sections/{id_section}/grades`); tests de dominio
+  puro + integración + HTTP. La ruta y el modelo actual (`GET
+  /lapses/{id}/grades/{student}`) se reemplazan.
 - **Fase 9 — Sincronización offline** (spec 009): hoy solo está el
   reconocimiento del soporte (`updated_at` ya en `attendance`) y los tests
   base (idempotencia + corrección + HTTP). Falta el protocolo en sí:
@@ -323,3 +335,21 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   (`HAtt`) al arrancar; los listados de `lapses`/`sections` filtran a las
   filas que el propio test creó antes de asertar el orden canónico.
   **256 tests verdes y repetibles** (dos corridas seguidas), clippy 0/0.
+- **Reconciliación 007/008 — Fase A (2026-10-10)** — las specs 007 y 008 se
+  reescribieron a SDD completo (RF, RNF, casos límite, plan, tasks) y se
+  aprobaron; 007 pasó de `implementada` a `aprobada` con nota de
+  reconciliación. Se resolvieron dudas de 007: padrón **global**, registro
+  **en lote**, baja con fila corregible.
+- **Fase B — `attendance` reconciliada (2026-10-10)** — B1–B7. `domain.rs` con
+  newtypes `EventId`/`StudentId`, `AttendanceState` (`parse`/`as_str`),
+  `ErrorAsistencia` y `puede_escribir_asistencia`; `queries.rs` reescrito con
+  `upsert`/`set_state`/`get`/`rows_by_event`/`padron` (se eliminan
+  `insert`/`list_by_event`); `service.rs` (`RegistroLote`, `registrar_listado`,
+  `listar_padron`, `corregir_asistencia`); `handler.rs` con `POST`/`GET
+  /events/{id}/attendance` y `PATCH .../{student}` (ruta corregida). Hallazgo:
+  `check_attendance_guards` corre en `INSERT` **y** `UPDATE`, así que el lapso
+  `CLOSED` también bloquea la corrección → el service pre-chequea ambos.
+  `state::text` hace que sqlx infiera `Option<String>` (igual que
+  `events.status`). Tests: `tests/attendance.rs` (6), `http_attendance.rs` (1
+  secuencial), `conflictos_bd.rs` +4 (reglas 4/7/10). **275 tests, clippy
+  0/0.** Fase B cerrada (B8).

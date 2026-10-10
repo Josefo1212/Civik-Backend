@@ -378,3 +378,235 @@ async fn dos_auto_el_mismo_dia_emiten_unicidad_23505() -> Resultado {
     tx.rollback().await?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Asistencia: reglas 4, 7 y 10 (defensa de base, SQL directo)
+// ---------------------------------------------------------------------------
+
+/// El primer jueves de septiembre del año, para una práctica regular válida.
+fn primer_jueves(anio: i32) -> chrono::NaiveDate {
+    let mut dia = chrono::NaiveDate::from_ymd_opt(anio, 9, 1).unwrap();
+    while dia.weekday() != Weekday::Thu {
+        dia = dia.succ_opt().unwrap();
+    }
+    dia
+}
+
+/// Arma lapso (PLANNED) + sección + estudiante + evento regular dentro de la
+/// transacción y devuelve sus ids.
+async fn montar_evento(
+    tx: &mut sqlx::PgTransaction<'_>,
+    anio: i32,
+    seccion: &str,
+) -> Result<(uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid), Box<dyn std::error::Error>> {
+    use civik_backend::modules::events::queries as events_q;
+    use civik_backend::modules::lapses::{domain::preparar_entrada, queries as lapses_q};
+    use civik_backend::modules::sections::{
+        domain::{DatosSeccion, Grado, Turno},
+        queries as sections_q,
+    };
+    use civik_backend::modules::students::{domain::DatosEstudiante, queries as students_q};
+
+    let lap = lapses_q::crear(
+        tx,
+        preparar_entrada(
+            &anio.to_string(),
+            "1",
+            &format!("{anio}-09-01"),
+            &format!("{anio}-12-20"),
+            "THURSDAY",
+        )?,
+    )
+    .await?;
+    let sec = sections_q::crear(
+        tx,
+        DatosSeccion {
+            grado: Grado::Primero,
+            seccion: seccion.into(),
+            turno: Turno::Matutino,
+        },
+    )
+    .await?;
+    let est = students_q::crear(
+        tx,
+        DatosEstudiante {
+            id_seccion: sec.id,
+            nombre: "N".into(),
+            apellido: "A".into(),
+            telefono: None,
+        },
+    )
+    .await?;
+    let ev = events_q::crear_manual(
+        tx.as_mut(),
+        lap.id,
+        primer_jueves(anio),
+        "PRACTICA_REGULAR",
+        "Clase",
+    )
+    .await?;
+    Ok((lap.id, sec.id, est.id, ev.id))
+}
+
+#[tokio::test]
+async fn asistencia_en_evento_cancelado_emite_check_violation_23514() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let (_lap, _sec, est, ev) = montar_evento(&mut tx, 2095, "B1").await?;
+    sqlx::query("UPDATE events SET status = 'CANCELLED', cancelled_reason = 'x' WHERE id = $1")
+        .bind(ev)
+        .execute(tx.as_mut())
+        .await?;
+
+    sqlx::query("SAVEPOINT intento_asistencia")
+        .execute(tx.as_mut())
+        .await?;
+    let resultado = sqlx::query(
+        "INSERT INTO attendance (id_event, id_student, state) VALUES ($1, $2, 'PRESENTE')",
+    )
+    .bind(ev)
+    .bind(est)
+    .execute(tx.as_mut())
+    .await;
+
+    let Err(error) = resultado else {
+        panic!("la regla 7 (`check_attendance_guards`) debe rechazar asistencia en CANCELLED");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23514"));
+    } else {
+        panic!("esperaba error DB, llegó: {error}");
+    }
+
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_asistencia")
+        .execute(tx.as_mut())
+        .await?;
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn asistencia_en_lapso_cerrado_emite_check_violation_23514() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let (lap, _sec, est, ev) = montar_evento(&mut tx, 2094, "B2").await?;
+    sqlx::query("UPDATE lapses SET status = 'ACTIVE' WHERE id = $1")
+        .bind(lap)
+        .execute(tx.as_mut())
+        .await?;
+    sqlx::query("UPDATE lapses SET status = 'CLOSED' WHERE id = $1")
+        .bind(lap)
+        .execute(tx.as_mut())
+        .await?;
+
+    sqlx::query("SAVEPOINT intento_asistencia")
+        .execute(tx.as_mut())
+        .await?;
+    let resultado = sqlx::query(
+        "INSERT INTO attendance (id_event, id_student, state) VALUES ($1, $2, 'PRESENTE')",
+    )
+    .bind(ev)
+    .bind(est)
+    .execute(tx.as_mut())
+    .await;
+
+    let Err(error) = resultado else {
+        panic!("la regla 4 (`assert_lapse_is_open`) debe rechazar asistencia en lapso CLOSED");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23514"));
+    } else {
+        panic!("esperaba error DB, llegó: {error}");
+    }
+
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_asistencia")
+        .execute(tx.as_mut())
+        .await?;
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn borrar_asistencia_emite_check_violation_23514() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let (_lap, _sec, est, ev) = montar_evento(&mut tx, 2093, "B3").await?;
+    sqlx::query("INSERT INTO attendance (id_event, id_student, state) VALUES ($1, $2, 'PRESENTE')")
+        .bind(ev)
+        .bind(est)
+        .execute(tx.as_mut())
+        .await?;
+
+    sqlx::query("SAVEPOINT intento_borrar")
+        .execute(tx.as_mut())
+        .await?;
+    let resultado = sqlx::query("DELETE FROM attendance WHERE id_event = $1")
+        .bind(ev)
+        .execute(tx.as_mut())
+        .await;
+
+    let Err(error) = resultado else {
+        panic!("la regla 10 (`attendance_no_delete`) debe impedir borrar asistencia");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23514"));
+    } else {
+        panic!("esperaba error DB, llegó: {error}");
+    }
+
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_borrar")
+        .execute(tx.as_mut())
+        .await?;
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn cambiar_identidad_de_asistencia_emite_check_violation_23514() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let (_lap, sec, est, ev) = montar_evento(&mut tx, 2092, "B4").await?;
+    let otro = civik_backend::modules::students::queries::crear(
+        &mut tx,
+        civik_backend::modules::students::domain::DatosEstudiante {
+            id_seccion: sec,
+            nombre: "Otro".into(),
+            apellido: "Alumno".into(),
+            telefono: None,
+        },
+    )
+    .await?;
+    sqlx::query("INSERT INTO attendance (id_event, id_student, state) VALUES ($1, $2, 'PRESENTE')")
+        .bind(ev)
+        .bind(est)
+        .execute(tx.as_mut())
+        .await?;
+
+    sqlx::query("SAVEPOINT intento_mover")
+        .execute(tx.as_mut())
+        .await?;
+    let resultado = sqlx::query("UPDATE attendance SET id_student = $1 WHERE id_event = $2")
+        .bind(otro.id)
+        .bind(ev)
+        .execute(tx.as_mut())
+        .await;
+
+    let Err(error) = resultado else {
+        panic!("la regla 10 (`attendance_identity_immutable`) debe impedir cambiar de estudiante");
+    };
+    if let sqlx::Error::Database(base) = &error {
+        assert_eq!(base.code().as_deref(), Some("23514"));
+    } else {
+        panic!("esperaba error DB, llegó: {error}");
+    }
+
+    sqlx::query("ROLLBACK TO SAVEPOINT intento_mover")
+        .execute(tx.as_mut())
+        .await?;
+    tx.rollback().await?;
+    Ok(())
+}
