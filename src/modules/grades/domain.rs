@@ -1,9 +1,14 @@
 use rust_decimal::Decimal;
 
-
-fn peso_regular() -> Decimal { Decimal::new(1, 0) }
-fn peso_extra() -> Decimal { Decimal::new(5, 1) }
-fn peso_presentacion() -> Decimal { Decimal::new(2, 0) }
+fn peso_regular() -> Decimal {
+    Decimal::new(1, 0)
+}
+fn peso_extra() -> Decimal {
+    Decimal::new(5, 1)
+}
+fn peso_presentacion() -> Decimal {
+    Decimal::new(2, 0)
+}
 
 #[derive(Debug, Clone)]
 pub struct Conteos {

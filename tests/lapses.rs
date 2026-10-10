@@ -196,20 +196,32 @@ async fn listar_ordena_por_anio_descendente_y_numero_ascendente() -> Resultado {
 
     let lista: Vec<Lapso> = listar(&mut *tx).await?;
 
+    // Se filtra a los años que este test controla: la tabla puede tener
+    // residuo committed de otros tests que corren en paralelo (misma base, sin
+    // aislamiento), y eso no debe romper la verificación del orden canónico.
     let obtenido: Vec<(i32, i16)> = lista
         .iter()
+        .filter(|l| l.school_year == 2024 || l.school_year == 2025)
         .map(|l| (l.school_year, l.lapse_number))
         .collect();
     // Año descendente, y dentro del mismo año número ascendente (RNF-3).
     let esperado = vec![(2025, 1), (2025, 2), (2024, 1), (2024, 3)];
     assert_eq!(obtenido, esperado, "RF-5: el orden debe ser el canónico");
 
-    // RNF-3: dos listados seguidos producen exactamente el mismo orden.
+    // RNF-3: dos listados seguidos producen exactamente el mismo orden
+    // (comparando solo los años controlados por este test).
     let segunda: Vec<Lapso> = listar(&mut *tx).await?;
-    assert_eq!(segunda.len(), lista.len());
-    assert_eq!(segunda[0].id, lista[0].id);
-    assert_eq!(segunda[1].id, lista[1].id);
-    assert_eq!(segunda[2].id, lista[2].id);
+    let segunda_filtrada: Vec<(i32, i16, Uuid)> = segunda
+        .iter()
+        .filter(|l| l.school_year == 2024 || l.school_year == 2025)
+        .map(|l| (l.school_year, l.lapse_number, l.id))
+        .collect();
+    let obtenido_con_id: Vec<(i32, i16, Uuid)> = lista
+        .iter()
+        .filter(|l| l.school_year == 2024 || l.school_year == 2025)
+        .map(|l| (l.school_year, l.lapse_number, l.id))
+        .collect();
+    assert_eq!(segunda_filtrada, obtenido_con_id);
 
     tx.rollback().await?;
     Ok(())

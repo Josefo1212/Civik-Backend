@@ -26,7 +26,12 @@ async fn calcular(
     let repo = PgGradeRepository::new(pool);
     let svc = GradeService::new(repo);
     match svc.calcular_nota(id_lapse, id_student).await {
-        Ok(nota) => Ok((StatusCode::OK, Json(NotaResponse { nota: nota.to_string() }))),
+        Ok(nota) => Ok((
+            StatusCode::OK,
+            Json(NotaResponse {
+                nota: nota.to_string(),
+            }),
+        )),
         Err(e) => Err(AppError::Database(e)),
     }
 }

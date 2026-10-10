@@ -7,17 +7,20 @@ use axum::{
 use sqlx::PgPool;
 use tracing::warn;
 
-use crate::modules::events::handler as events;
-use crate::modules::sections::handler as sections_handler;
-use crate::modules::lapses::handler as lapses;
 use crate::modules::attendance::handler as attendance_handler;
-use crate::modules::students::handler as estudiantes;
+use crate::modules::events::handler as events;
 use crate::modules::grades::handler as grades_handler;
+use crate::modules::lapses::handler as lapses;
+use crate::modules::sections::handler as sections_handler;
+use crate::modules::students::handler as estudiantes;
 
 pub fn build_router(pool: PgPool) -> Router {
     Router::new()
         .route("/_health", get(health_check))
-        .route("/sections", post(sections_handler::crear).get(sections_handler::listar))
+        .route(
+            "/sections",
+            post(sections_handler::crear).get(sections_handler::listar),
+        )
         .route(
             "/sections/{id}",
             get(sections_handler::consultar)
@@ -25,7 +28,10 @@ pub fn build_router(pool: PgPool) -> Router {
                 .delete(sections_handler::eliminar),
         )
         .route("/sections/{id}/baja", post(sections_handler::baja))
-        .route("/sections/{id}/reactivar", post(sections_handler::reactivar))
+        .route(
+            "/sections/{id}/reactivar",
+            post(sections_handler::reactivar),
+        )
         .route(
             "/sections/{id}/students",
             post(estudiantes::crear).get(estudiantes::listar),

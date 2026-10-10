@@ -73,7 +73,12 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   11 tests `tests/events_auto.rs` + 5 HTTP `tests/http_events.rs` +
   `dos_auto_el_mismo_dia_emiten_unicidad_23505` en `tests/conflictos_bd.rs`.
   Mapeo `uq_events_auto_one_per_day` (23505) → 409 en `shared/error.rs`.
-  **Fase 6 cerrada**; sigue **Fase 7 (`attendance`)**.
+  **Fase 6 cerrada**.
+- **Fase 7 (`attendance`)**, **Fase 8 (`grades` hex. completo)** y **Fase 9
+  (`offline`, en progreso — solo T0/T1)** completadas según el detalle de la
+  Bitácora. **Suite completa: 256 tests, clippy 0/0.** Lo que falta de la
+  fase 9 (protocolo de conflicto por `updated_at`, tolerancia de reloj) se
+  especifica antes de codificar; ver "Próximos pasos".
 - Esquema en `db/migrations/` ya corregido: sin `notes`/`school_term`, sin
   orquestación en PL/pgSQL. Las 10 reglas son constraints/triggers.
 - `AGENTS.md` + skill `civik-dominio` documentan arquitectura, stack,
@@ -172,12 +177,28 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   (y el propio SDD exige que un cambio de requisitos vaya primero a la spec),
   y una columna además de negocio no se agrega solo porque "se pueda" — cada
   campo del esquema tiene un requisito detrás que lo justifique.
+- **Los tests comparten `civik_dev` y corren en paralelo**: los que usan
+  transacción + rollback no ensucian, pero los HTTP hacen `commit` de verdad.
+  Un test nunca debe asumir que la tabla solo tiene SUS filas. Reglas que
+  surgieron al chocar: (a) cada archivo usa un **año escolar propio** y su
+  limpieza acota por ese rango, no por `>= 2050` a lo bruto; (b) al borrar
+  residuo de lapsos, excluir los que tienen eventos (`NOT EXISTS`), porque el
+  trigger `lapses_delete_guard` emite `23514`; (c) los listados que asertan
+  orden canónico **filtran primero a los ids que el test creó** y recién ahí
+  comparan; (d) un test HTTP que commitea debe purgar su residuo al arrancar
+  (por si una corrida previa falló a mitad), no solo al terminar.
 
 ## Próximos pasos
 
-- **Fase 7 — `attendance`**: registrar y corregir asistencia (sin
-  sincronización todavía); cubre reglas 7 y 10. Depende de `events` y
-  `students` ya terminados.
+- **Fase 9 — Sincronización offline** (spec 009): hoy solo está el
+  reconocimiento del soporte (`updated_at` ya en `attendance`) y los tests
+  base (idempotencia + corrección + HTTP). Falta el protocolo en sí:
+  detección de conflicto por `updated_at`, tolerancia de reloj y el
+  contrato idempotente de red; ampliar `specs/009-offline/{spec,plan,tasks}.md`
+  antes de tocar código.
+- **Fase 10 — Endurecer tests**: portar los 76 casos de
+  `verify-constraints.sql` a tests de integración (patrón tx/rollback).
+- **Fase 11 — Deploy**: Dockerfile + `compose.yaml`, al final.
 - Los `dead_code` de `shared/*` los limpia el cierre de la fase en curso.
 
 ## Bitácora
@@ -267,6 +288,38 @@ que ya no aporte. Al convertirse en regla permanente, se mueve a
   23505→409 (mapeo en `shared/error.rs`, test real en `conflictos_bd.rs`).
   Suite completa verde (250 tests), clippy 0/0. **Fase 6 cerrada.**
 
-- **Fase 7 (2026-10-09)** — `attendance` registrar/corregir (sin sincronización offline). Módulo hexagonal parcial: `domain`, `queries/*.sql` (list/insert/set_state), `service` (transacción + auditoría), `handler` (POST /events/{id}/attendance, PATCH /attendance/{id}/{student}) montado en `app.rs`. Tests `tests/attendance.rs` (2), `tests/http_attendance.rs` (1). Defensa con triggers BD existente. Suite verde, clippy 0/0. **Fase 7 cerrada.**
-- **Fase 8 (2026-10-09)** — `grades` hexagonal completo: `domain/compute_grade` puro (sin f64, rust_decimal), `ports` trait + `adapter_pg` (sqlx), `service`, `handler` GET /lapses/{id}/grades/{student}. Tests unitarios `tests/grades.rs` (3). Suite verde, clippy 0/0. **Fase 8 cerrada.**
-- **Fase 9 (2026-10-09)** — Sincronización offline (attendance): revisión de soporte `updated_at`, tests de idempotencia, corrección sin borrar fila, test HTTP. Esquema ya tenía `updated_at`; añadido `tests/http_attendance.rs` (1). **Fase 9 en progreso/T1 completo.** Suite verde (core), clippy 0/0.
+- **Fase 7 (2026-10-09)** — `attendance` registrar y corregir (sin
+  sincronización offline todavía; cubre reglas 7 y 10). spec 007
+  **implementada**. Módulo hexagonal parcial (`domain`, `queries/*.sql`
+  `list_by_event`/`insert`/`set_state`, `service` con transacción + auditoría,
+  `handler`); rutas `POST /events/{id}/attendance` y
+  `PATCH /attendance/{id_event}/{id_student}` montadas en `app.rs` con
+  `.merge()` (axum 0.8 rechaza `nest("/")`). **Enum `attendance_state`**: los
+  macros `query_file_as!` no lo infieren como parámetro → `queries.rs` usa
+  `sqlx::query` + `Row::get` y castea `$n::attendance_state`; timestamps como
+  `Option<DateTime<Utc>>`. `tests/attendance.rs` (2: idempotencia insert
+  duplicado falla, corrección cambia `state` sin borrar fila),
+  `tests/http_attendance.rs` (1). Clippy 0/0. **Fase 7 cerrada.**
+- **Fase 8 (2026-10-09)** — `grades`, la pieza más sensible, hexagonal
+  **completo**: `domain/compute_grade` puro (sin `async`, sin `sqlx`, sin
+  `f64`; `rust_decimal::Decimal` para la nota), `ports.rs` (`trait
+  GradeRepository`, justifica `async-trait` v0.1.92), `adapter_pg.rs` (sqlx),
+  `service.rs` y `handler.rs` (`GET /lapses/{id}/grades/{student}`). Base 20,
+  mínimo 0; pesos `PRACTICA_REGULAR=1`, `PRACTICA_EXTRA=0.5`,
+  `PRESENTACION=2`; solo `AUSENTE` penaliza; override por (estudiante,
+  lapso) prevalece. `tests/grades.rs` (3). Clippy 0/0. **Fase 8 cerrada.**
+- **Fase 9 — T0/T1 (2026-10-09)** — spec 009 (`offline`); se confirmó que el
+  esquema ya traía `updated_at` en `attendance` y se añadieron los tests base
+  de idempotencia/corrección/HTTP. El **protocolo offline real** (detección de
+  conflicto por `updated_at`, tolerancia de reloj, contrato idempotente de
+  red) **sigue pendiente**: ampliar spec/plan/tasks antes de codificar.
+  **Suite completa: 256 tests, clippy 0/0** (con la corrección de aislamiento
+  de tests de abajo).
+- **Fase 9 — aislamiento de tests (2026-10-10)** — la base es única y los
+  tests corren en paralelo; al sumar `http_attendance` (commitea de verdad)
+  afloraron choques de residuo entre archivos. Se endureció: `http_lapses`
+  acota su limpieza a `2050..2090` y excluye lapsos con eventos
+  (`NOT EXISTS`); `http_attendance` purga su propio año (2099) y su sección
+  (`HAtt`) al arrancar; los listados de `lapses`/`sections` filtran a las
+  filas que el propio test creó antes de asertar el orden canónico.
+  **256 tests verdes y repetibles** (dos corridas seguidas), clippy 0/0.

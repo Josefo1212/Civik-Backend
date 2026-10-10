@@ -630,18 +630,29 @@ async fn listar_activas_ordena_por_grado_y_subdivision_y_omite_inactivas() -> Re
     // del grado la subdivisión en orden alfabético.
     let lista = listar_activas(&mut *tx, None).await?;
 
+    // Se filtra a las secciones que este test creó: la tabla puede tener
+    // residuo committed de otros tests que corren en paralelo (misma base, sin
+    // aislamiento), y eso no debe romper la verificación del orden canónico.
+    let propias = [
+        _3ro_c.id, _1ro_a.id, _5to_b.id, _2do_a.id, _3ro_a.id, _1ro_b.id,
+    ];
     let esperado = ["1ro:a", "1ro:b", "2do:a", "3ro:c", "5to:b"];
     let obtenido: Vec<String> = lista
         .iter()
+        .filter(|s| propias.contains(&s.id))
         .map(|s| format!("{}:{}", s.grade_level, s.section))
         .collect();
     assert_eq!(obtenido, esperado, "RF-11: el orden debe ser el canónico");
 
-    // RNF-3: dos listados seguidos producen exactamente el mismo orden.
+    // RNF-3: dos listados seguidos producen exactamente el mismo orden
+    // (comparando solo las secciones controladas por este test).
     let segunda = listar_activas(&mut *tx, None).await?;
-    assert_eq!(lista[0].id, segunda[0].id);
-    assert_eq!(lista[1].id, segunda[1].id);
-    assert_eq!(lista[2].id, segunda[2].id);
+    let obtenido_segunda: Vec<String> = segunda
+        .iter()
+        .filter(|s| propias.contains(&s.id))
+        .map(|s| format!("{}:{}", s.grade_level, s.section))
+        .collect();
+    assert_eq!(obtenido_segunda, obtenido);
 
     tx.rollback().await?;
     Ok(())
@@ -657,7 +668,14 @@ async fn listar_activas_filtra_por_un_solo_grado() -> Resultado {
     let _2do_b = crear(&mut tx, preparar_entrada("2do", "b", "MATUTINO")?).await?;
 
     // RF-10: solo las activas de ese grado, mismo orden que el listado completo.
-    let lista = listar_activas(&mut *tx, Some(Grado::Primero)).await?;
+    // Se filtra a las secciones de este test para no depender del residuo de
+    // otros tests que comparten la base.
+    let propias = [_1ro_a.id, _1ro_c.id, _2do_b.id];
+    let lista: Vec<_> = listar_activas(&mut *tx, Some(Grado::Primero))
+        .await?
+        .into_iter()
+        .filter(|s| propias.contains(&s.id))
+        .collect();
     assert_eq!(lista.len(), 2, "el filtro deja fuera el 2do");
 
     let ids: Vec<Uuid> = lista.iter().map(|s| s.id).collect();

@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use super::domain::{compute_grade};
+use super::domain::compute_grade;
 use super::ports::GradeRepository;
 
 pub struct GradeService<R: GradeRepository> {
@@ -12,7 +12,11 @@ impl<R: GradeRepository> GradeService<R> {
         Self { repo }
     }
 
-    pub async fn calcular_nota(&self, id_lapse: Uuid, id_student: Uuid) -> Result<rust_decimal::Decimal, sqlx::Error> {
+    pub async fn calcular_nota(
+        &self,
+        id_lapse: Uuid,
+        id_student: Uuid,
+    ) -> Result<rust_decimal::Decimal, sqlx::Error> {
         let conteos = self.repo.obtener_conteos(id_lapse, id_student).await?;
         let res = compute_grade(conteos);
         Ok(res.nota)

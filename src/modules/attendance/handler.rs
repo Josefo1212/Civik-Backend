@@ -5,7 +5,6 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use uuid::Uuid;
 
-
 use crate::shared::error::AppError;
 
 use super::service::{self, RegistroLote};

@@ -34,7 +34,12 @@ where
         .collect())
 }
 
-pub async fn set_state<'e, E>(executor: E, id_event: Uuid, id_student: Uuid, state: &str) -> Result<Attendance>
+pub async fn set_state<'e, E>(
+    executor: E,
+    id_event: Uuid,
+    id_student: Uuid,
+    state: &str,
+) -> Result<Attendance>
 where
     E: PgExecutor<'e>,
 {
@@ -57,7 +62,12 @@ where
     })
 }
 
-pub async fn insert<'e, E>(executor: E, id_event: Uuid, id_student: Uuid, state: &str) -> Result<Attendance>
+pub async fn insert<'e, E>(
+    executor: E,
+    id_event: Uuid,
+    id_student: Uuid,
+    state: &str,
+) -> Result<Attendance>
 where
     E: PgExecutor<'e>,
 {

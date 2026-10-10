@@ -49,9 +49,12 @@ static RESIDUO_LIMPIADO: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::cons
 async fn limpiar_residuo_previo(pool: &sqlx::PgPool) -> Resultado {
     RESIDUO_LIMPIADO
         .get_or_try_init(|| async {
-            sqlx::query("DELETE FROM lapses WHERE school_year >= 2050")
-                .execute(pool)
-                .await?;
+            sqlx::query(
+                "DELETE FROM lapses WHERE school_year >= 2050 AND school_year < 2090 \
+                 AND NOT EXISTS (SELECT 1 FROM events WHERE events.id_lapse = lapses.id)",
+            )
+            .execute(pool)
+            .await?;
             Ok::<(), sqlx::Error>(())
         })
         .await?;

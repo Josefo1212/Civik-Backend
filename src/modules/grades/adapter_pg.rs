@@ -18,7 +18,11 @@ impl PgGradeRepository {
 
 #[async_trait]
 impl GradeRepository for PgGradeRepository {
-    async fn obtener_conteos(&self, id_lapse: Uuid, id_student: Uuid) -> Result<Conteos, sqlx::Error> {
+    async fn obtener_conteos(
+        &self,
+        id_lapse: Uuid,
+        id_student: Uuid,
+    ) -> Result<Conteos, sqlx::Error> {
         let row = sqlx::query(
             "SELECT
                 COALESCE(SUM(CASE WHEN a.state='AUSENTE' AND e.type_event='PRACTICA_REGULAR' THEN 1 ELSE 0 END),0) as ausentes_regular,
