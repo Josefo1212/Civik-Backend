@@ -5,15 +5,15 @@
 - [x] plan, tasks completos
 
 ## T1 domain.rs
-- [ ] enum AttendanceState, validaciones puras
+- [x] enum AttendanceState, validaciones puras
 
 ## T2 queries.rs + SQL
-- [ ] list_by_event, set_state, insert_batch
+- [x] list_by_event, set_state, insert
 
 ## T3 service.rs
-- [ ] registrar_listado(tx/lote)
-- [ ] corregir_asistencia
-- [ ] auditoría
+- [x] registrar_listado(tx/lote)
+- [x] corregir_asistencia
+- [x] auditoría
 
 ## T4 tests/attendance.rs (tx/rollback)
 - [ ] registra lote OK

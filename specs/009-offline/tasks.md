@@ -5,5 +5,5 @@
 - [x] plan/tasks
 
 ## T1
-- [ ] revisar attendance para soporte updated_at/conflictos
-- [ ] añadir tests
+- [x] revisar attendance para soporte updated_at/conflictos
+- [x] añadir tests
