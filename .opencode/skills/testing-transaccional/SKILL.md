@@ -55,6 +55,21 @@ Si alguno de estos dos casos aparece de verdad, la alternativa es
 migrada y destruida al terminar), no volver a crear una base de test
 separada y persistente.
 
+## Aislamiento: los tests comparten `civik_dev` y corren en paralelo
+Los tests con transacción + rollback no ensucian, pero los HTTP hacen
+`commit` de verdad. Ningún test debe asumir que una tabla solo tiene SUS
+filas. Reglas que surgieron de choques reales:
+- Cada archivo de test usa un **año escolar propio** y su limpieza acota por
+  ese rango (no `>= 2050` a lo bruto). Años en uso: 2001–2003/`HGra`,
+  2010–2015/`W10`–`W15`, 2016/`WOf1`, 2020, 2024–2050, 2055–2060,
+  2061–2072, 2079–2099/`HAtt`, 3001–3006.
+- Al borrar residuo de lapsos, excluir los que tienen eventos
+  (`NOT EXISTS`): el trigger `lapses_delete_guard` emite `23514`.
+- Los listados que asertan orden canónico **filtran primero a los ids que el
+  test creó**, y recién ahí comparan.
+- Un test HTTP que commitea debe **purgar su residuo al arrancar** (por si
+  una corrida previa falló a mitad), no solo al terminar.
+
 ## Checklist antes de dar un test por bueno
 - [ ] ¿Termina en `rollback` (o se descarta sin `commit`)?
 - [ ] Si prueba una invariante que bloquea algo, ¿el assert es sobre el

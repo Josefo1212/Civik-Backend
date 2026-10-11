@@ -20,24 +20,22 @@ identificadores externos que no controlamos.
 
 ## Estado actual — leer antes de nada
 
-Proyecto **reiniciado desde cero**. La versión anterior (Node + TypeScript +
-Express, sin arquitectura hexagonal) se abandonó por decisión explícita,
-antes de que hubiera código de aplicación o `db/` versionada: se detectó que
-las bases no encajaban con lo que se quería construir, y se corrigió cuando
-el costo de corregir era mínimo.
+Proyecto **reiniciado desde cero**: la versión anterior (Node + TypeScript +
+Express, sin arquitectura hexagonal) se abandonó por decisión explícita
+antes de que hubiera código de aplicación o `db/` versionada — las bases no
+encajaban con lo que se quería construir, y se corrigió cuando el costo era
+mínimo. Del reinicio se conservaron el esquema (10 reglas de dominio, sin
+`notes`/`school_term` ni orquestación en PL/pgSQL), `dbmate` y los entornos
+(GitHub / Docker / Tailscale, "nada se borra físicamente").
 
-**Lo que se conserva del reinicio anterior**, porque no depende del
-lenguaje del backend:
-- El esquema de base de datos (10 reglas de dominio, defensa en
-  profundidad), ya corregido: sin la tabla `notes`, sin `school_term`, sin
-  las funciones de orquestación en PL/pgSQL (ver sección de base de datos).
-- `dbmate` como herramienta de migraciones.
-- Los tres entornos (código en GitHub, imagen en Docker, dónde corre),
-  Tailscale, la filosofía de "nada se borra físicamente".
+**Fases 0–10 del "Orden de construcción" completas** (bootstrap, `shared`,
+`sections`, `students`, `lapses`, `events` manual + automático, `attendance`,
+`grades`, `offline`, endurecer tests). Specs 002–010 en `specs/` con
+`Estado: implementada`. Suite completa: **334 tests**, `clippy --all-targets
+-- -D warnings` en 0/0, `cargo fmt` limpio.
 
-**Lo que NO existe todavía:** ningún código de Rust, ningún `Cargo.toml`,
-ningún test. Este documento describe el plan acordado. No asumir que algo
-existe porque está descrito acá.
+**Próximo:** Fase 11 (deploy Docker). No asumir que algo funciona porque está
+descrito acá. El detalle histórico por fase vive en `docs/bitacora.md`.
 
 ## Stack
 
@@ -313,6 +311,23 @@ lenguaje.
   repositorio (`adapter_pg.rs`) solo trae conteos agregados; la fórmula no
   sabe que Postgres existe.
 
+### Reglas de negocio que viven en el dominio de Rust
+
+- **El peso de una nota depende de `type_event`, no de `source`**: una
+  práctica regular **manual** pesa `1`, igual que una AUTO.
+- **Una práctica regular manual puede crearse con fecha pasada** mientras el
+  lapso no esté `CLOSED`, pero **solo en el `practice_day` del lapso**: la
+  base solo obliga esto para `AUTO`, y el dominio lo valida también para
+  `MANUAL`. `PRACTICA_EXTRA`/`PRESENTACION` no tienen restricción de día.
+  La única frontera temporal real es el lapso `CLOSED`.
+- **`generar_practicas_auto` omite los `practice_day` que ya tengan una
+  práctica regular (AUTO o MANUAL)**: cada día de práctica tiene como máximo
+  una regular, la cree quien la cree. El generador es manual, idempotente,
+  cubre todo el rango del lapso y **no mira el reloj** (puede crear fechas
+  pasadas mientras el lapso no esté `CLOSED`).
+- La **constitución SDD** vive en `docs/constitution.md`, no en la raíz:
+  coincide con la ruta que usan el skill `sdd` y los comandos `/sdd-*`.
+
 ## Testing: transacción + rollback, sin base de datos de test separada
 
 No hay `civik_test`. Los tests corren contra `civik_dev`, dentro de una
@@ -358,6 +373,74 @@ producción por error humano con `psql` directo sigue siendo posible.
 `dbmate` se mantiene. Un archivo por cambio, con `-- migrate:up` y
 `-- migrate:down`. Nunca se edita una migración ya aplicada; se crea la
 siguiente — regla absoluta desde el primer commit de `db/` en este reinicio.
+`db/schema.sql` **se versiona**: es contra lo que se leen los diffs de
+esquema, no un artefacto local descartable.
+
+## Entorno de desarrollo (host)
+
+- **El host no tiene `psql` ni `pg_dump`** (ni sudo/apt/dpkg): el contenedor
+  `pruebapostgres-postgres-1` los ofrece vía
+  `docker exec ... psql -U josefo -d civik_dev`. `dbmate up` descarga el
+  volcado de esquema **en silencio** si `pg_dump` no está; lo compensa un
+  envoltorio `~/.local/bin/pg_dump` (fuera del repo) que delega en el
+  contenedor. Verificar `db/schema.sql` tras cada migración.
+- **`psql -c` con varias sentencias es una sola transacción**: si la segunda
+  falla, la primera se revierte en silencio. Para limpiezas, un `-c` por
+  sentencia.
+- **`Value::default()` de serde_json es `Null`, no `{}`**: para payloads
+  opcionales a `jsonb NOT NULL DEFAULT '{}'` hay que construir
+  `Value::Object(Map::new())`, no usar `unwrap_or_default()`.
+
+## Aprendizajes y errores a evitar
+
+- **sqlx no mapea enums propios en los macros de compilación** (ni como
+  parámetro ni en columnas de `RETURNING`; los casts se infieren además como
+  nulables). `sections.shift` (`shift_type`) se resuelve así: el parámetro se
+  bindea como text y se castea en SQL (`$3::text::shift_type`), el
+  `RETURNING` omite la columna del enum, y la fila queda `String`. No pelear
+  con `#[sqlx(type_name)]` en macros.
+- **`&mut PgTransaction` no implementa `PgExecutor`**: en las funciones de
+  query hay que pasar `tx.as_mut()` (→ `&mut PgConnection`).
+- **`sqlx::query_as` con una sola columna no existe**: para un `RETURNING id`
+  de un solo `Uuid` usar `query_scalar`. Un error de Postgres también puede
+  dejar `query_scalar` sin deducir el tipo: anotarlo explícitamente
+  (`let id: Uuid = ...`).
+- **`updated_at` es `TIMESTAMPTZ`**: leerlo como `chrono::DateTime<Utc>`;
+  `NaiveDateTime` falla con "not compatible".
+- **`Decimal::rescale(scale)` muta in-place**; cálculo de nota a 1 decimal,
+  override a 2.
+- **Un `DELETE` contra una FK `ON DELETE RESTRICT` emite `23001`
+  (restrict_violation), no `23503`** (que es de INSERT con `NO ACTION`).
+  `mapear_violacion` matchea ambos. Lección: el mapeo de conflictos se prueba
+  contra Postgres real, no solo en memoria.
+- **Postgres aborta la transacción al primer error**: ningún query posterior
+  funciona hasta `ROLLBACK`. Para verificar el estado tras un fallo esperado,
+  usar un savepoint; **sqlx 0.8 no expone savepoints**, se hacen con SQL
+  directo (`SAVEPOINT x` / `ROLLBACK TO SAVEPOINT x`).
+- **Dentro de una transacción `now()` es constante**, así que el trigger
+  `set_updated_at` pisa `updated_at` con el mismo valor en cada UPDATE: "no
+  modifica nada" no se prueba comparando timestamps, sino con
+  `rows_affected() == 0` sobre el UPDATE en bruto.
+- **En un test con `connect_lazy`, acotar `acquire_timeout`**: el pool espera
+  30 s por defecto; con 3 s el test de `_health` 503 es instantáneo.
+- **`validar_largo` cuenta caracteres, no bytes**: `varchar(n)` de Postgres
+  cuenta caracteres; medir en bytes rechazaría datos válidos.
+- **`rustfmt` sobre un archivo con `mod`** (p. ej. `src/lib.rs`) reformatea en
+  cascada sus submódulos: no es un cambio misterioso.
+- **`lapses::queries::activar`/`cerrar` solo mueven el estado si es el
+  esperado** (`set_status.sql` lleva `WHERE status = $esperado`): con otro
+  estado devuelven el lapso **sin error** (no-op silencioso). Para probar
+  `CLOSED` hay que activar primero (`PLANNED → ACTIVE → CLOSED`); leer el
+  estado real, no confiar en "no falló".
+- **Para testear un service que abre su propia transacción, separar el núcleo
+  en `algo_en_tx(&mut PgTransaction, ...)`** y dejar el wrapper que abre y
+  cierra (`sincronizar` / `sincronizar_en_tx`). La transacción de test no ve
+  lo que otra conexión no confirmó: el núcleo recibiendo la tx permite
+  ejercerlo sin `commit` (constitución nº 6).
+- **Un requisito fuera del alcance se cumple desde la primera
+  implementación**: la spec 003 declaró "sin cédula" y aun así se añadió
+  `national_id`. Un campo del esquema necesita un requisito detrás que lo
+  justifique, y un cambio de requisitos va primero a la spec.
 
 ## Reparto de responsabilidades
 
@@ -387,7 +470,7 @@ con una fase a medias.
 | **7. `attendance`** | Registrar y corregir asistencia (sin sincronización todavía) | Depende de `events` y `students` ya terminados. Cubre las reglas 7 y 10 |
 | **8. `grades`** | Hexagonal completo: `compute_grade`, `GradeRepository`, el endpoint por lapso y sección | Necesita datos reales de `attendance`, `events` y `lapses` para tener algo que agregar. Es la pieza más sensible: se construye con todo lo demás ya validado, no en paralelo |
 | **9. Sincronización offline** | El protocolo de conflicto sobre `attendance` (idempotencia, `updated_at`, tolerancia de reloj) | Es un incremento sobre `attendance`, no un módulo nuevo. Se deja para el final porque es la parte con más casos borde de concurrencia, y conviene tener el resto del dominio estable antes de sumarle esto |
-| **10. Endurecer tests** | Portar los 76 casos de `verify-constraints.sql` a tests de integración en Rust (patrón transacción/rollback), incluida la prueba de sensibilidad | Recién tiene sentido con los módulos ya escritos: antes de eso no hay código de aplicación que ejercite las invariantes, solo la base |
+| **10. Endurecer tests** | Matriz de invariantes del esquema (`db/schema.sql`: CHECK, UNIQUE, EXCLUDE, FK RESTRICT y triggers) a tests de integración en Rust (patrón transacción/rollback), con prueba de sensibilidad | Recién tiene sentido con los módulos ya escritos: antes de eso no hay código de aplicación que ejercite las invariantes, solo la base |
 | **11. Deploy** | Dockerfile, `compose.yaml` | Deliberadamente al final. No documentar ni construir esto antes de tener algo real que empaquetar |
 
 **Regla para decidir si una fase está "lista":** compila sin warnings de
