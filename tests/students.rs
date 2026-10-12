@@ -17,7 +17,7 @@ use civik_backend::modules::sections::domain::{DatosSeccion, Grado, Turno};
 use civik_backend::modules::sections::queries as secciones;
 use civik_backend::modules::students::domain::{preparar_entrada, DatosEstudiante};
 use civik_backend::modules::students::queries::{
-    consultar, crear, editar, listar_por_seccion, set_active, ErrorEstudiante,
+    consultar, crear, editar, listar_por_seccion, listar_todos, set_active, ErrorEstudiante,
 };
 use uuid::Uuid;
 
@@ -723,6 +723,86 @@ async fn los_nombres_en_blanco_se_rechazan_aunque_se_salte_el_dominio() -> Resul
     } else {
         panic!("esperaba un error de base de datos, llegó: {error}");
     }
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn listar_todos_trae_todas_las_secciones_y_omite_inactivas_por_defecto() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    // Dos secciones distintas: el listado global las une en una sola llamada.
+    let seccion_a = crear_seccion(&mut tx, "g1").await;
+    let seccion_b = crear_seccion(&mut tx, "g2").await;
+    let activo = crear(&mut tx, datos_de_prueba(seccion_a.id, "Pérez", "Ana").await).await?;
+    let inactivo = crear(
+        &mut tx,
+        datos_de_prueba(seccion_b.id, "Rojas", "Carlos").await,
+    )
+    .await?;
+    sqlx::query("UPDATE students SET active = false WHERE id = $1")
+        .bind(inactivo.id)
+        .execute(&mut *tx)
+        .await?;
+
+    let propias = [activo.id, inactivo.id];
+
+    // RF-1: por defecto, solo activos, de cualquier sección.
+    let solo_activos: Vec<_> = listar_todos(&mut *tx, false)
+        .await?
+        .into_iter()
+        .filter(|e| propias.contains(&e.id))
+        .collect();
+    assert_eq!(solo_activos.len(), 1);
+    assert_eq!(solo_activos[0].id, activo.id);
+    assert_eq!(solo_activos[0].id_section, seccion_a.id);
+
+    // RF-2: con la bandera, también los inactivos marcados.
+    let con_inactivos: Vec<_> = listar_todos(&mut *tx, true)
+        .await?
+        .into_iter()
+        .filter(|e| propias.contains(&e.id))
+        .collect();
+    assert_eq!(con_inactivos.len(), 2);
+    let dado_de_baja = con_inactivos
+        .iter()
+        .find(|e| e.id == inactivo.id)
+        .expect("el inactivo debe aparecer");
+    assert!(!dado_de_baja.active, "RF-2: marcado como inactivo");
+    assert_eq!(dado_de_baja.id_section, seccion_b.id);
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn listar_todos_ordena_canonico_y_es_estable() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let seccion = crear_seccion(&mut tx, "g3").await;
+    let _pedro = crear(&mut tx, datos_de_prueba(seccion.id, "Pérez", "luis").await).await?;
+    let _garcia = crear(&mut tx, datos_de_prueba(seccion.id, "García", "Ana").await).await?;
+
+    // RNF-2: mismo orden canónico que el padrón por sección y estable entre
+    // llamadas. Se compara solo el par de este test dentro del listado global.
+    let orden = |lista: Vec<civik_backend::modules::students::queries::Estudiante>| {
+        lista
+            .into_iter()
+            .filter(|e| e.id_section == seccion.id)
+            .map(|e| format!("{}:{}", e.last_name, e.first_name))
+            .collect::<Vec<_>>()
+    };
+    let primera = orden(listar_todos(&mut *tx, false).await?);
+    assert_eq!(
+        primera,
+        vec!["García:Ana".to_string(), "Pérez:luis".to_string()]
+    );
+
+    let segunda = orden(listar_todos(&mut *tx, false).await?);
+    assert_eq!(segunda, primera, "el orden debe ser estable");
 
     tx.rollback().await?;
     Ok(())

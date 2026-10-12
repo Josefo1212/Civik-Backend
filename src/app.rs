@@ -36,6 +36,7 @@ pub fn build_router(pool: PgPool) -> Router {
             "/sections/{id}/students",
             post(estudiantes::crear).get(estudiantes::listar),
         )
+        .route("/students", get(estudiantes::listar_todos))
         .route(
             "/students/{id}",
             get(estudiantes::consultar).put(estudiantes::editar),

@@ -9,6 +9,7 @@
 use crate::modules::students::domain::{preparar_entrada, ErrorEntrada};
 use crate::modules::students::queries;
 use crate::shared::error::AppError;
+use crate::shared::filtro::leer_incluir_inactivas;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -39,7 +40,8 @@ pub struct EntradaEdicion {
     telefono: Option<String>,
 }
 
-/// Filtro del listado: `GET /sections/{id}/students?incluir_inactivas=true`.
+/// Filtro del listado: `?incluir_inactivas=true`, tanto en el padrón por
+/// sección como en el listado global.
 #[derive(Deserialize)]
 pub struct FiltroIncluirInactivas {
     incluir_inactivas: Option<String>,
@@ -75,29 +77,35 @@ pub async fn crear(
 /// `GET /sections/{id}/students?incluir_inactivas=true` — padrón de la
 /// sección (RF-6, RF-7).
 ///
-/// El parámetro se lee como `String` y se valida a mano (plan 003 §7): el
-/// `Option<bool>` de serde podría responder 400 también, pero el rechazo de
-/// extracción de axum no se compila contra `AppError` sin conversiones extra.
+/// El parámetro se lee como `String` y lo convierte `leer_incluir_inactivas`
+/// (plan 003 §7): el `Option<bool>` de serde podría responder 400 también,
+/// pero el rechazo de extracción de axum no se compila contra `AppError` sin
+/// conversiones extra.
 pub async fn listar(
     State(pool): State<PgPool>,
     Path(id_seccion): Path<Uuid>,
     Query(filtro): Query<FiltroIncluirInactivas>,
 ) -> Result<Json<Vec<queries::Estudiante>>, AppError> {
-    let incluir_inactivas = match filtro.incluir_inactivas.as_deref() {
-        None => false,
-        Some("true") => true,
-        Some("false") => false,
-        Some(otro) => {
-            return Err(AppError::BadRequest(format!(
-                "incluir_inactivas debe ser «true» o «false», llegó «{otro}»"
-            )));
-        }
-    };
+    let incluir_inactivas = leer_incluir_inactivas(filtro.incluir_inactivas.as_deref())?;
 
     let mut tx = pool.begin().await?;
     let estudiantes = queries::listar_por_seccion(&mut tx, id_seccion, incluir_inactivas).await?;
     tx.commit().await?;
 
+    Ok(Json(estudiantes))
+}
+
+/// `GET /students?incluir_inactivas=true` — listado global (RF-1, RF-2, RF-3).
+///
+/// La vista "todos juntos" del front: todas las secciones en una sola llamada,
+/// con el mismo filtro y la misma forma que el padrón por sección.
+pub async fn listar_todos(
+    State(pool): State<PgPool>,
+    Query(filtro): Query<FiltroIncluirInactivas>,
+) -> Result<Json<Vec<queries::Estudiante>>, AppError> {
+    let incluir_inactivas = leer_incluir_inactivas(filtro.incluir_inactivas.as_deref())?;
+
+    let estudiantes = queries::listar_todos(&pool, incluir_inactivas).await?;
     Ok(Json(estudiantes))
 }
 

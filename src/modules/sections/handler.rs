@@ -10,6 +10,7 @@
 use crate::modules::sections::domain::{preparar_entrada, ErrorDominio, Grado};
 use crate::modules::sections::queries;
 use crate::shared::error::AppError;
+use crate::shared::filtro::leer_incluir_inactivas;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -31,10 +32,11 @@ pub struct EntradaSeccion {
     shift: String,
 }
 
-/// Filtro opcional del listado: `GET /sections?grado=1ro`.
+/// Filtros opcionales del listado: `GET /sections?grado=1ro&incluir_inactivas=true`.
 #[derive(Deserialize)]
 pub struct FiltroGrado {
     grado: Option<String>,
+    incluir_inactivas: Option<String>,
 }
 
 /// Convierte un `ErrorDominio` (campo vacío, largo, grado o turno
@@ -70,10 +72,12 @@ pub async fn crear(
     Ok((StatusCode::CREATED, Json(seccion)))
 }
 
-/// `GET /sections?grado=...` — listado de activas (RF-9 a RF-11, RF-24).
+/// `GET /sections?grado=...&incluir_inactivas=...` — listado (RF-9 a RF-11,
+/// RF-24 de 002; RF-4, RF-5 de 011).
 ///
 /// Un grado en el filtro que no esté en el catálogo es un `400` con el mismo
 /// mensaje que el alta (RF-7): la enumeración sale del enum, no de un literal.
+/// `incluir_inactivas` agrega las secciones dadas de baja (RF-5).
 pub async fn listar(
     State(pool): State<PgPool>,
     Query(filtro): Query<FiltroGrado>,
@@ -82,8 +86,9 @@ pub async fn listar(
         Some(texto) => Some(Grado::try_from(texto.as_str()).map_err(dominios_a_bad_request)?),
         None => None,
     };
+    let incluir_inactivas = leer_incluir_inactivas(filtro.incluir_inactivas.as_deref())?;
 
-    let secciones = queries::listar_activas(&pool, grado).await?;
+    let secciones = queries::listar(&pool, grado, incluir_inactivas).await?;
     Ok(Json(secciones))
 }
 

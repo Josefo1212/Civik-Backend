@@ -713,3 +713,86 @@ async fn eliminacion_de_seccion_con_estudiantes_responde_409() -> Resultado {
     limpiar_seccion(id).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn listado_200_incluye_inactivas_con_la_bandera_y_400_con_la_mala() -> Resultado {
+    let pool = common::pool().await?;
+    let app = build_router(pool.clone());
+    let sub = subdivision_unica();
+
+    let alta = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/sections")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "grade_level": "2do",
+                        "section": sub,
+                        "shift": "MATUTINO",
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(alta.status(), StatusCode::CREATED);
+    let id = Uuid::parse_str(
+        serde_json::from_slice::<Value>(&to_bytes(alta.into_body(), usize::MAX).await?)?["id"]
+            .as_str()
+            .unwrap(),
+    )?;
+    sqlx::query("UPDATE sections SET active = false WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await?;
+
+    let buscar = |lista: &Value, id: Uuid| -> Option<Value> {
+        lista
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"].as_str() == Some(id.to_string().as_str()))
+            .cloned()
+    };
+
+    // RF-4: sin bandera, la dada de baja no aparece.
+    let sin_bandera = app
+        .clone()
+        .oneshot(Request::builder().uri("/sections").body(Body::empty())?)
+        .await?;
+    assert_eq!(sin_bandera.status(), StatusCode::OK);
+    let lista: Value =
+        serde_json::from_slice(&to_bytes(sin_bandera.into_body(), usize::MAX).await?)?;
+    assert!(buscar(&lista, id).is_none(), "RF-4: la inactiva se omite");
+
+    // RF-5: con la bandera aparece, marcada.
+    let con_bandera = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/sections?incluir_inactivas=true")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(con_bandera.status(), StatusCode::OK);
+    let lista: Value =
+        serde_json::from_slice(&to_bytes(con_bandera.into_body(), usize::MAX).await?)?;
+    let fila = buscar(&lista, id).expect("RF-5: la inactiva debe aparecer");
+    assert_eq!(fila["active"], false, "RF-5: marcada como inactiva");
+
+    // RF-6: un valor que no es true/false es 400, no 500.
+    let malo = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/sections?incluir_inactivas=si")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(malo.status(), StatusCode::BAD_REQUEST, "RF-6");
+
+    limpiar_seccion(id).await?;
+    Ok(())
+}

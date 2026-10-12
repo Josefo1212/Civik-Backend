@@ -30,9 +30,10 @@ mínimo. Del reinicio se conservaron el esquema (10 reglas de dominio, sin
 
 **Fases 0–10 del "Orden de construcción" completas** (bootstrap, `shared`,
 `sections`, `students`, `lapses`, `events` manual + automático, `attendance`,
-`grades`, `offline`, endurecer tests). Specs 002–010 en `specs/` con
-`Estado: implementada`. Suite completa: **334 tests**, `clippy --all-targets
--- -D warnings` en 0/0, `cargo fmt` limpio.
+`grades`, `offline`, endurecer tests), más la spec 011 (endpoints pendientes
+del front). Specs 002–011 en `specs/` con `Estado: implementada`. Suite
+completa: **339 tests**, `clippy --all-targets -- -D warnings` en 0/0,
+`cargo fmt` limpio.
 
 **Próximo:** Fase 11 (deploy Docker). No asumir que algo funciona porque está
 descrito acá. El detalle histórico por fase vive en `docs/bitacora.md`.
@@ -486,6 +487,17 @@ Sin cambios: PWA en React/Vite, sin negocio propio. No calcula notas, no
 decide si algo se puede cancelar o reprogramar. Guarda en IndexedDB,
 sincroniza, y muestra la nota como **provisional** mientras el lapso está
 abierto.
+
+### Endpoints que pide el frontend — implementados
+
+La PWA necesita un **listado global de estudiantes** para su vista "todos
+juntos", que antes no podía armar con solo `GET /sections/{id}/students`
+(padrón por sección) y `GET /sections` (solo activas).
+
+Implementado en la spec 011: `GET /students` (con filtro `incluir_inactivas`,
+en la misma forma que el padrón por sección) y `GET
+/sections?incluir_inactivas`, para listar y reactivar filas dadas de baja en
+una sesión anterior. La brecha quedó cerrada; no hay endpoints pendientes.
 
 ## Deploy (más adelante, no ahora)
 

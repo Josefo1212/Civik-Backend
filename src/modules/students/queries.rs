@@ -185,6 +185,29 @@ pub async fn listar_por_seccion(
     Ok(filas)
 }
 
+/// El listado global de estudiantes, sin filtrar por sección (RF-1, RF-2): el
+/// punto de entrada de la vista "todos juntos" del front.
+///
+/// Una sola consulta, así que acepta un `PgExecutor` genérico (pool o
+/// transacción): `incluir_inactivas = false` devuelve solo los activos;
+/// `true`, también los inactivos con su estado. El orden canónico es el mismo
+/// del padrón por sección (`lower(last_name), lower(first_name), id`), de modo
+/// que ambas vistas coinciden (RNF-2).
+pub async fn listar_todos(
+    pool: impl PgExecutor<'_>,
+    incluir_inactivas: bool,
+) -> sqlx::Result<Vec<Estudiante>> {
+    let filas = sqlx::query_file_as!(
+        Estudiante,
+        "src/modules/students/queries/list_all.sql",
+        incluir_inactivas,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(filas)
+}
+
 /// Edita un estudiante ya normalizado y deja su "editar" en el historial
 /// (RF-10, RF-18). Se usa el mismo `preparar_entrada` del alta, así la
 /// normalización y la validación de obligatorios son idénticas (RF-10, RF-11).

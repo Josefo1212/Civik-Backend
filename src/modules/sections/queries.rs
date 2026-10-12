@@ -273,16 +273,18 @@ pub async fn eliminar(tx: &mut PgTransaction<'_>, id: Uuid) -> sqlx::Result<Secc
     Ok(base.en_seccion())
 }
 
-/// Lista las secciones activas en el orden canónico de la spec (RF-9 a RF-11,
-/// RF-24): `1ro`→`5to` y, dentro de cada grado, la subdivisión en orden
-/// alfabético. `grado` filtra por uno solo (RF-10).
+/// Lista las secciones en el orden canónico de la spec (RF-9 a RF-11, RF-24):
+/// `1ro`→`5to` y, dentro de cada grado, la subdivisión en orden alfabético.
+/// `grado` filtra por uno solo (RF-10); `incluir_inactivas` agrega las
+/// secciones dadas de baja, marcadas con su `active` (RF-4, RF-5 de 011).
 ///
-/// El array del `ORDER BY` de `list_active.sql` se construye acá desde
+/// El array del `ORDER BY` de `list.sql` se construye acá desde
 /// `Grado::TODOS` (una sola fuente de verdad para el orden); pasarlo como
 /// `None` mantiene el orden canónico y deja fuera el filtro.
-pub async fn listar_activas(
+pub async fn listar(
     pool: impl PgExecutor<'_>,
     grado: Option<Grado>,
+    incluir_inactivas: bool,
 ) -> sqlx::Result<Vec<Seccion>> {
     let orden_canonico: Vec<String> = Grado::TODOS
         .iter()
@@ -291,9 +293,10 @@ pub async fn listar_activas(
 
     let filas = sqlx::query_file_as!(
         FilaConShift,
-        "src/modules/sections/queries/list_active.sql",
+        "src/modules/sections/queries/list.sql",
         grado.map(|grado| grado.as_str()),
         &orden_canonico,
+        incluir_inactivas,
     )
     .fetch_all(pool)
     .await?;

@@ -20,8 +20,9 @@
 //!   "la sección tiene estudiantes" y la fila sigue.
 //! - RF-27: alta, edición, baja, reactivación y eliminación dejan su
 //!   auditoría.
-//! - RF-9 a RF-11 y RF-24: `listar_activas` devuelve en una sola llamada,
+//! - RF-9 a RF-11 y RF-24: `listar` devuelve en una sola llamada,
 //!   omite las inactivas y ordena `1ro`→`5to` con la subdivisión alfabética.
+//!   Con `incluir_inactivas` también las trae (RF-4, RF-5 de 011).
 //! - RF-12 y RF-13: `get_by_id` trae también las dadas de baja e inexistentes
 //!   no devuelven fila.
 //!
@@ -32,7 +33,7 @@ mod common;
 
 use civik_backend::modules::sections::domain::{preparar_entrada, Grado};
 use civik_backend::modules::sections::queries::{
-    crear, editar, eliminar, get_by_id, listar_activas, set_active, Seccion,
+    crear, editar, eliminar, get_by_id, listar, set_active, Seccion,
 };
 use civik_backend::shared::error::AppError;
 use uuid::Uuid;
@@ -611,7 +612,7 @@ async fn eliminar_una_seccion_dada_de_baja_sin_estudiantes_tambien_la_borra() ->
 }
 
 #[tokio::test]
-async fn listar_activas_ordena_por_grado_y_subdivision_y_omite_inactivas() -> Resultado {
+async fn listar_ordena_por_grado_y_subdivision_y_omite_inactivas() -> Resultado {
     let pool = common::pool().await?;
     let mut tx = pool.begin().await?;
 
@@ -628,7 +629,7 @@ async fn listar_activas_ordena_por_grado_y_subdivision_y_omite_inactivas() -> Re
 
     // RF-9: todas las activas en una sola llamada; RF-11: `1ro`→`5to` y dentro
     // del grado la subdivisión en orden alfabético.
-    let lista = listar_activas(&mut *tx, None).await?;
+    let lista = listar(&mut *tx, None, false).await?;
 
     // Se filtra a las secciones que este test creó: la tabla puede tener
     // residuo committed de otros tests que corren en paralelo (misma base, sin
@@ -646,7 +647,7 @@ async fn listar_activas_ordena_por_grado_y_subdivision_y_omite_inactivas() -> Re
 
     // RNF-3: dos listados seguidos producen exactamente el mismo orden
     // (comparando solo las secciones controladas por este test).
-    let segunda = listar_activas(&mut *tx, None).await?;
+    let segunda = listar(&mut *tx, None, false).await?;
     let obtenido_segunda: Vec<String> = segunda
         .iter()
         .filter(|s| propias.contains(&s.id))
@@ -659,7 +660,7 @@ async fn listar_activas_ordena_por_grado_y_subdivision_y_omite_inactivas() -> Re
 }
 
 #[tokio::test]
-async fn listar_activas_filtra_por_un_solo_grado() -> Resultado {
+async fn listar_filtra_por_un_solo_grado() -> Resultado {
     let pool = common::pool().await?;
     let mut tx = pool.begin().await?;
 
@@ -671,7 +672,7 @@ async fn listar_activas_filtra_por_un_solo_grado() -> Resultado {
     // Se filtra a las secciones de este test para no depender del residuo de
     // otros tests que comparten la base.
     let propias = [_1ro_a.id, _1ro_c.id, _2do_b.id];
-    let lista: Vec<_> = listar_activas(&mut *tx, Some(Grado::Primero))
+    let lista: Vec<_> = listar(&mut *tx, Some(Grado::Primero), false)
         .await?
         .into_iter()
         .filter(|s| propias.contains(&s.id))
@@ -682,6 +683,43 @@ async fn listar_activas_filtra_por_un_solo_grado() -> Resultado {
     assert!(ids.contains(&_1ro_a.id) && ids.contains(&_1ro_c.id));
     assert_eq!(lista[0].section, "a");
     assert_eq!(lista[1].section, "c");
+
+    tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn listar_incluir_inactivas_trae_las_dadas_de_baja_marcadas() -> Resultado {
+    let pool = common::pool().await?;
+    let mut tx = pool.begin().await?;
+
+    let activa = crear(&mut tx, preparar_entrada("4to", "z", "MATUTINO")?).await?;
+    let de_baja = crear(&mut tx, preparar_entrada("4to", "y", "MATUTINO")?).await?;
+    set_active(&mut tx, de_baja.id, false).await?;
+
+    let propias = [activa.id, de_baja.id];
+
+    // RF-4: por defecto la sección dada de baja no aparece.
+    let solo_activas: Vec<_> = listar(&mut *tx, None, false)
+        .await?
+        .into_iter()
+        .filter(|s| propias.contains(&s.id))
+        .collect();
+    assert_eq!(solo_activas.len(), 1);
+    assert_eq!(solo_activas[0].id, activa.id);
+
+    // RF-5: con la bandera aparece, marcada como inactiva.
+    let con_inactivas: Vec<_> = listar(&mut *tx, None, true)
+        .await?
+        .into_iter()
+        .filter(|s| propias.contains(&s.id))
+        .collect();
+    assert_eq!(con_inactivas.len(), 2);
+    let inactiva = con_inactivas
+        .iter()
+        .find(|s| s.id == de_baja.id)
+        .expect("la dada de baja debe aparecer");
+    assert!(!inactiva.active, "RF-5: marcada como inactiva");
 
     tx.rollback().await?;
     Ok(())

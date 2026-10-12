@@ -48,7 +48,7 @@ pub enum Grado {
 
 impl Grado {
     /// En orden canónico. De acá salen la validación, el texto del error y el
-    /// array del `ORDER BY` de `list_active.sql`: una sola fuente de verdad.
+    /// array del `ORDER BY` de `list.sql`: una sola fuente de verdad.
     pub const TODOS: [Grado; 5] = [
         Grado::Primero,
         Grado::Segundo,

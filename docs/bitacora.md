@@ -188,3 +188,14 @@ es. Orden cronológico.
   override lo aborta `lapses_delete_guard` (23514) antes que la FK; el host
   **sí** tiene `psql`/`pg_isready` (Postgres nativo en `:5432`, no contenedor).
   **334 tests, clippy 0/0, fmt limpio.** Fase 10 cerrada.
+- **Spec 011 — endpoints del front (2026-10-11)** — T1–T5. Cierra la brecha que
+  pedía la PWA: `GET /students` (listado global, con `incluir_inactivas`) y
+  `GET /sections?incluir_inactivas`, en la misma forma y orden canónico que el
+  padrón por sección. `students::queries::listar_todos` + `list_all.sql`;
+  `sections::queries::listar_activas` → `listar` (con bandera) y
+  `list_active.sql` → `list.sql`, con `($n::boolean OR active)` para no
+  duplicar el `ORDER BY` canónico. El parseo del booleano se centralizó en
+  `shared::filtro::leer_incluir_inactivas` (reusado por los tres listados), y
+  se extrajo de `students::handler::listar`. Aprendizaje: `shared/` gana un
+  cuarto archivo cuando hay un uso real compartido (no por anticipado).
+  **339 tests, clippy 0/0, fmt limpio.** Spec 011 cerrada.
